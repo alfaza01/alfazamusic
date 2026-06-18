@@ -170,37 +170,7 @@ app.get("/api/search", async (req: any, res: any) => {
   }
 });
 
-// STREAM-URL - Kembalikan URL audio sebagai JSON (player putar langsung)
-app.get("/api/stream", async (req: any, res: any) => {
-  const videoId = (req.query.id as string || '').split('_')[0];
-  if (!videoId) return res.status(400).json({ error: "id required" });
-
-  const instances = [
-    "https://iv.melmac.space",
-    "https://invidious.jing.rocks",
-    "https://yewtu.be",
-    "https://invidious.nerdvpn.de",
-    "https://invidious.no-logs.com",
-  ];
-
-  for (const inst of instances) {
-    try {
-      const r = await fetchWithTimeout(`${inst}/api/v1/videos/${videoId}`, { timeout: 4000 });
-      if (r.ok) {
-        const data: any = await r.json();
-        const audios = (data.adaptiveFormats || []).filter((f: any) => f.type?.startsWith("audio/"));
-        const best = audios.find((f: any) => f.itag === 140) || audios.find((f: any) => f.itag === 251) || audios[0];
-        if (best?.url) {
-          // Kembalikan URL langsung — browser putar tanpa proxy (hindari timeout Vercel)
-          return res.json({ url: best.url, type: best.type || "audio/mp4" });
-        }
-      }
-    } catch {}
-  }
-
-  // Fallback: vevioz mp3 redirect URL
-  return res.json({ url: `https://api.vevioz.com/api/button/mp3/${videoId}`, type: "audio/mpeg" });
-});
+// (Stream proxy removed. Client resolves streams directly to avoid Vercel timeouts)
 
 // YOUTUBE-ID
 app.get("/api/youtube-id", async (req: any, res: any) => {

@@ -24,36 +24,52 @@ export function YouTubeIframeAudioPlayer({ videoId }: Props) {
   const [resolvedUrl, setResolvedUrl] = useState<string>('');
   const cleanVideoId = videoId.split('_')[0];
 
-  // Resolve stream URL from backend
+  // Resolve stream URL from Client (Bypass Vercel entirely)
   useEffect(() => {
     if (!cleanVideoId) return;
     setLoadingAudio(true);
     setAudioError(null);
     setResolvedUrl('');
 
-    const resolve = async () => {
-      try {
-        // Fetch URL audio dari API (ringan, cepat, tidak proxy file besar)
-        const apiUrl = `${BASE_URL}/api/stream?id=${cleanVideoId}`;
-        const res = await fetch(apiUrl, { signal: AbortSignal.timeout(8000) });
-        
-        if (res.ok) {
-          const data = await res.json();
-          if (data?.url) {
-            setResolvedUrl(data.url);
-            return;
+    const resolveStreamClientSide = async () => {
+      const instances = [
+        "https://iv.melmac.space",
+        "https://invidious.jing.rocks",
+        "https://yewtu.be",
+        "https://invidious.nerdvpn.de",
+        "https://invidious.no-logs.com",
+      ];
+
+      for (const inst of instances) {
+        try {
+          // fetch directly from phone (bypasses CORS on Android via CapacitorHttp)
+          const apiUrl = `${inst}/api/v1/videos/${cleanVideoId}`;
+          const res = await fetch(apiUrl, { signal: AbortSignal.timeout(6000) });
+          
+          if (res.ok) {
+            const data = await res.json();
+            const audios = (data.adaptiveFormats || []).filter((f: any) => f.type?.startsWith("audio/"));
+            // Prioritize reliable itags
+            const best = audios.find((f: any) => f.itag === 140) || audios.find((f: any) => f.itag === 251) || audios[0];
+            
+            if (best?.url) {
+              console.log("Successfully resolved stream from:", inst);
+              setResolvedUrl(best.url);
+              return;
+            }
           }
+        } catch (e) {
+          // ignore error and try next instance
         }
-        // Fallback: coba langsung tanpa json wrapper (backward compat)
-        setResolvedUrl(apiUrl);
-      } catch (e) {
-        console.error('Failed to resolve stream URL:', e);
-        setAudioError('Gagal mendapatkan URL audio.');
-        setLoadingAudio(false);
       }
+
+      // If all instances fail, set error
+      console.warn("All stream servers failed for video:", cleanVideoId);
+      setAudioError("Lagu tidak tersedia saat ini. Server sibuk.");
+      setLoadingAudio(false);
     };
 
-    resolve();
+    resolveStreamClientSide();
   }, [cleanVideoId]);
 
   // Play / Pause
