@@ -1,4 +1,4 @@
-import { X, Copy, ExternalLink, Music, Video, Sparkles, HelpCircle, Check, Share2, Play, Pause, Loader2, Download, AlertCircle, CheckCircle, Minimize2, Maximize2 } from "lucide-react";
+import { X, Copy, ExternalLink, Music, Video, Sparkles, HelpCircle, Check, Share2, Play, Pause, Loader2, Download, AlertCircle, CheckCircle, Minimize2, Maximize2, SkipBack, SkipForward } from "lucide-react";
 import { useMenuStore } from "../../store/useMenuStore";
 import { usePlayerStore } from "../../store/usePlayerStore";
 import { motion, AnimatePresence } from "motion/react";
@@ -21,50 +21,11 @@ async function fetchWithTimeoutClient(url: string, options: RequestInit & { time
 }
 
 async function resolveDirectClientAudioUrl(videoId: string): Promise<string> {
-  const cobaltInstances = [
-    "https://cobalt.fast-minds.net/",
-    "https://co.e7.to/",
-    "https://cobalt.perv.cat/",
-    "https://cobalt.vky.app/",
-    "https://api.cobalt.sh/",
-    "https://api.cobalt.moe/"
-  ];
-
-  for (const instance of cobaltInstances) {
-    try {
-      console.log(`[ClientAudioResolver] Mengambil dari Cobalt: ${instance}`);
-      const res = await fetchWithTimeoutClient(instance, {
-        method: "POST",
-        headers: {
-          "Accept": "application/json",
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          url: `https://www.youtube.com/watch?v=${videoId}`,
-          isAudioOnly: true,
-          downloadMode: "audio",
-          audioFormat: "mp3",
-          audioBitrate: "128"
-        }),
-        timeout: 4000
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.url) {
-          console.log(`[ClientAudioResolver] Berhasil lewat Cobalt: ${instance}`);
-          return data.url;
-        }
-      }
-    } catch (err) {
-      console.warn(`[ClientAudioResolver] Cobalt gagal: ${instance}`, err);
-    }
-  }
-
   const invidiousInstances = [
     "https://iv.melmac.space",
-    "https://invidious.nerdvpn.de",
+    "https://invidious.jing.rocks",
     "https://yewtu.be",
+    "https://invidious.nerdvpn.de",
     "https://invidious.no-logs.com"
   ];
 
@@ -72,15 +33,16 @@ async function resolveDirectClientAudioUrl(videoId: string): Promise<string> {
     try {
       console.log(`[ClientAudioResolver] Mengambil dari Invidious: ${inst}`);
       const res = await fetchWithTimeoutClient(`${inst}/api/v1/videos/${videoId}`, {
-        timeout: 4000
+        timeout: 5000
       });
       if (res.ok) {
         const data = await res.json();
         if (data && data.adaptiveFormats && data.adaptiveFormats.length > 0) {
           const audios = data.adaptiveFormats.filter((f: any) => f.type && f.type.startsWith("audio/"));
           if (audios.length > 0) {
+            // Prioritize reliable itags (140 = m4a 128kbps, 251 = opus 160kbps)
             const bestAudio = audios.find((f: any) => f.itag === 140 || f.itag === "140") || 
-                              audios.find((f: any) => f.container === "m4a") || 
+                              audios.find((f: any) => f.itag === 251 || f.itag === "251") || 
                               audios[0];
             if (bestAudio && bestAudio.url) {
               console.log(`[ClientAudioResolver] Berhasil lewat Invidious: ${inst}`);
@@ -110,6 +72,8 @@ export function SongConverterModal() {
     isPlaying,
     togglePlay,
     playSong,
+    nextSong,
+    prevSong,
     currentTimeSec,
     totalDurationSec,
     progressPercent,
@@ -427,23 +391,44 @@ export function SongConverterModal() {
                     </div>
                     
                     {/* Control Trigger */}
-                    <button 
-                      onClick={() => {
-                        if (isCurrentLocalPlay) {
-                          togglePlay();
-                        } else {
-                          playSong(converterModalSong);
-                        }
-                      }}
-                      className="w-10 h-10 rounded-full bg-primary hover:bg-primary/90 text-white flex items-center justify-center transition-all shrink-0 shadow-md shadow-primary/25"
-                      id="modal-play-toggle"
-                    >
-                      {isCurrentLocalPlay && isPlaying ? (
-                        <Pause size={18} fill="currentColor" />
-                      ) : (
-                        <Play size={18} fill="currentColor" className="ml-0.5" />
-                      )}
-                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button 
+                        onClick={() => { if (isCurrentLocalPlay) prevSong(); }}
+                        className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${isCurrentLocalPlay ? 'text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-700' : 'text-slate-300 dark:text-slate-600 cursor-not-allowed'}`}
+                        disabled={!isCurrentLocalPlay}
+                        title="Lagu Sebelumnya"
+                      >
+                        <SkipBack size={16} fill="currentColor" />
+                      </button>
+
+                      <button 
+                        onClick={() => {
+                          if (isCurrentLocalPlay) {
+                            togglePlay();
+                          } else {
+                            playSong(converterModalSong);
+                          }
+                        }}
+                        className="w-10 h-10 rounded-full bg-primary hover:bg-primary/90 text-white flex items-center justify-center transition-all shadow-md shadow-primary/25"
+                        id="modal-play-toggle"
+                        title="Putar / Jeda"
+                      >
+                        {isCurrentLocalPlay && isPlaying ? (
+                          <Pause size={18} fill="currentColor" />
+                        ) : (
+                          <Play size={18} fill="currentColor" className="ml-0.5" />
+                        )}
+                      </button>
+
+                      <button 
+                        onClick={() => { if (isCurrentLocalPlay) nextSong(); }}
+                        className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${isCurrentLocalPlay ? 'text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-700' : 'text-slate-300 dark:text-slate-600 cursor-not-allowed'}`}
+                        disabled={!isCurrentLocalPlay}
+                        title="Lagu Berikutnya"
+                      >
+                        <SkipForward size={16} fill="currentColor" />
+                      </button>
+                    </div>
                   </div>
 
                   {/* Progress track if this song is currently played/loaded */}
