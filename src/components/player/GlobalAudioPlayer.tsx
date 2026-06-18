@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { usePlayerStore } from '../../store/usePlayerStore';
 import { getSavedSongs } from '../../lib/db';
-import { YouTubeIframeAudioPlayer } from './YouTubeIframeAudioPlayer';
 
 export function GlobalAudioPlayer() {
   const { 
@@ -20,7 +19,6 @@ export function GlobalAudioPlayer() {
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const [localUrl, setLocalUrl] = useState<string>('');
-  const [isLocalMode, setIsLocalMode] = useState<boolean>(false);
 
   // 1. Resolve Audio URL when currentSong changes
   useEffect(() => {
@@ -36,7 +34,6 @@ export function GlobalAudioPlayer() {
       try {
         // Case 1: Local / Imported / Downloaded Song in IndexedDB
         if (currentSong.id.startsWith('local_') || currentSong.url === 'local_blob' || currentSong.url?.startsWith('blob:')) {
-          setIsLocalMode(true);
           const savedSongs = await getSavedSongs();
           const matched = savedSongs.find(s => s.id === currentSong.id);
           if (matched && matched.blob) {
@@ -45,22 +42,63 @@ export function GlobalAudioPlayer() {
           } else {
             setLocalUrl(currentSong.url || '');
           }
-        } else {
-          // Case 2: Online song using the robust YouTube iframe wrapper!
-          // Setting mode to external lets the YouTubeIframeAudioPlayer take over.
-          setIsLocalMode(false);
-          setLocalUrl('');
-          
-          // Still auto copy to clipboard as convenience for user
-          try {
-            const vidId = currentSong.id.split('_')[0];
-            const ytUrl = `https://www.youtube.com/watch?v=${vidId}`;
-            navigator.clipboard.writeText(ytUrl).catch(() => {});
-          } catch(e) {}
+          return;
         }
+
+        // Case 2: Online song - Client-side Invidious Rotation
+        const cleanVideoId = currentSong.id.split('_')[0];
+        
+        // Coba server satu per satu (Anti-Error Rotation System)
+        const instances = [
+          "https://iv.melmac.space",
+          "https://invidious.jing.rocks",
+          "https://yewtu.be",
+          "https://invidious.nerdvpn.de",
+          "https://invidious.no-logs.com",
+        ];
+
+        let successUrl = '';
+
+        for (const inst of instances) {
+          try {
+            // fetch directly from phone (bypasses CORS on Android via CapacitorHttp)
+            const apiUrl = `${inst}/api/v1/videos/${cleanVideoId}`;
+            const res = await fetch(apiUrl, { signal: AbortSignal.timeout(5000) });
+            
+            if (res.ok) {
+              const data = await res.json();
+              const audios = (data.adaptiveFormats || []).filter((f: any) => f.type?.startsWith("audio/"));
+              
+              // Prioritize reliable itags (140 = m4a 128kbps, 251 = opus 160kbps)
+              const best = audios.find((f: any) => f.itag === 140) || audios.find((f: any) => f.itag === 251) || audios[0];
+              
+              if (best?.url) {
+                console.log("Berhasil memuat dari server:", inst);
+                successUrl = best.url;
+                break; // Stop loop if successful
+              }
+            }
+          } catch (e) {
+            console.warn(`Server ${inst} sibuk/gagal, mencoba server berikutnya...`);
+          }
+        }
+
+        if (successUrl) {
+          setLocalUrl(successUrl);
+        } else {
+          // If all instances fail
+          throw new Error("Semua server streaming sedang sibuk.");
+        }
+
+        // Copy original YouTube URL to clipboard silently for convenience
+        try {
+          const ytUrl = `https://www.youtube.com/watch?v=${cleanVideoId}`;
+          navigator.clipboard.writeText(ytUrl).catch(() => {});
+        } catch(e) {}
+
       } catch (e: any) {
-        console.warn('Playback resolution failed:', e.message || e);
-        setAudioError('Gagal memuat track.');
+        console.error('Playback resolution failed:', e.message || e);
+        setAudioError('Gagal memuat lagu. Server sedang sibuk.');
         setLoadingAudio(false);
       }
     };
@@ -68,10 +106,8 @@ export function GlobalAudioPlayer() {
     loadAndResolve();
   }, [currentSong]);
 
-  // 2. Play/Pause control based on store state (Local Audio Element Only)
+  // 2. Play/Pause control based on store state
   useEffect(() => {
-    if (!isLocalMode) return;
-    
     let active = true;
     if (audioRef.current && !isLoadingAudio && localUrl) {
       if (isPlaying) {
@@ -90,7 +126,7 @@ export function GlobalAudioPlayer() {
       }
     }
     return () => { active = false; };
-  }, [isPlaying, localUrl, isLoadingAudio, isLocalMode]);
+  }, [isPlaying, localUrl, isLoadingAudio]);
 
   // 3. Setup PWA Media Session API for Lock Screen & Notification widget controls
   useEffect(() => {
@@ -98,7 +134,7 @@ export function GlobalAudioPlayer() {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: currentSong.title,
         artist: currentSong.artist,
-        album: 'Pemutar Musik Pribadi',
+        album: 'Music Alfaza',
         artwork: [
           { src: currentSong.cover || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=300&auto=format&fit=crop', sizes: '96x96', type: 'image/jpeg' },
           { src: currentSong.cover || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=300&auto=format&fit=crop', sizes: '512x512', type: 'image/jpeg' }
@@ -122,25 +158,15 @@ export function GlobalAudioPlayer() {
       previoustrack: () => prevSong(),
       nexttrack: () => nextSong(),
       seekbackward: (details: any) => {
-        if (isLocalMode && audioRef.current) {
+        if (audioRef.current) {
           const offset = details.seekOffset || 10;
           audioRef.current.currentTime = Math.max(audioRef.current.currentTime - offset, 0);
-        } else {
-          // Send backward seek to store to be handled by YouTube iframe
-          const state = usePlayerStore.getState();
-          const target = Math.max(0, state.currentTimeSec - (details.seekOffset || 10));
-          usePlayerStore.getState().requestSeek(target / Math.max(1, state.totalDurationSec));
         }
       },
       seekforward: (details: any) => {
-        if (isLocalMode && audioRef.current) {
+        if (audioRef.current) {
           const offset = details.seekOffset || 10;
           audioRef.current.currentTime = Math.min(audioRef.current.currentTime + offset, audioRef.current.duration || 0);
-        } else {
-          // Send forward seek to store
-          const state = usePlayerStore.getState();
-          const target = Math.min(state.totalDurationSec, state.currentTimeSec + (details.seekOffset || 10));
-          usePlayerStore.getState().requestSeek(target / Math.max(1, state.totalDurationSec));
         }
       }
     };
@@ -154,29 +180,40 @@ export function GlobalAudioPlayer() {
         try { navigator.mediaSession.setActionHandler(action as any, null); } catch (e) {}
       });
     };
-  }, [currentSong, isLocalMode]);
+  }, [currentSong]);
 
-  // 4. Seek request from UI Progress Bar (Local Audio Element Only)
+  // 4. Seek request from UI Progress Bar
   useEffect(() => {
-    if (isLocalMode && seekRequest !== null && audioRef.current) {
+    if (seekRequest !== null && audioRef.current) {
       const targetTime = (audioRef.current.duration || 180) * seekRequest;
       if (isFinite(targetTime)) {
         audioRef.current.currentTime = targetTime;
       }
       clearSeekRequest();
     }
-  }, [seekRequest, isLocalMode, clearSeekRequest]);
+  }, [seekRequest, clearSeekRequest]);
 
   const handleTimeUpdate = () => {
-    if (audioRef.current && isLocalMode) {
+    if (audioRef.current) {
       const current = audioRef.current.currentTime;
       const duration = isFinite(audioRef.current.duration) && audioRef.current.duration > 0 ? audioRef.current.duration : 180;
       setProgress(current / duration, current, duration);
+      
+      // Update Lock Screen progress
+      if ('mediaSession' in navigator && isFinite(current) && isFinite(duration) && duration > 0) {
+        try {
+          navigator.mediaSession.setPositionState({
+            duration: duration,
+            playbackRate: 1.0,
+            position: current
+          });
+        } catch (e) {}
+      }
     }
   };
 
   const handleLoadedMetadata = () => {
-    if (audioRef.current && isLocalMode) {
+    if (audioRef.current) {
       setProgress(0, 0, audioRef.current.duration || 180);
       setLoadingAudio(false);
     }
@@ -186,7 +223,7 @@ export function GlobalAudioPlayer() {
 
   return (
     <>
-      {isLocalMode && localUrl && (
+      {localUrl && (
         <audio
           ref={audioRef}
           src={localUrl}
@@ -196,16 +233,12 @@ export function GlobalAudioPlayer() {
           onCanPlay={() => setLoadingAudio(false)}
           onEnded={nextSong}
           onError={(e) => {
-            if (audioRef.current?.error?.code === 1) return;
-            setAudioError("Pemutaran lagu lokal gagal.");
+            if (audioRef.current?.error?.code === 1) return; // AbortError
+            setAudioError("Pemutaran lagu gagal (Server terputus).");
             setLoadingAudio(false);
           }}
           style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
         />
-      )}
-      
-      {!isLocalMode && currentSong.id && (
-        <YouTubeIframeAudioPlayer videoId={currentSong.id.split('_')[0]} />
       )}
     </>
   );
