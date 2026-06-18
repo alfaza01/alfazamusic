@@ -41,7 +41,64 @@ function startServer() {
     next();
   });
 
-  // Search API using YouTube (yt-search)
+  // Resilient Search Helper (Bypasses Vercel IP Blocks)
+  async function resilientSearch(query: string) {
+    // 1. Try yt-search (works on Localhost)
+    try {
+      const ytsPromise = yts(query);
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000));
+      const r: any = await Promise.race([ytsPromise, timeoutPromise]);
+      if (r && r.videos && r.videos.length > 0) {
+        return r.videos.map((v: any) => ({
+          videoId: v.videoId,
+          title: v.title,
+          author: v.author?.name || "YouTube Artist",
+          thumbnail: v.thumbnail || v.image || '',
+          seconds: v.seconds || 240,
+          timestamp: v.timestamp || "4:00"
+        }));
+      }
+    } catch (e) {
+      console.log("yt-search blocked or timed out, falling back to Invidious APIs...");
+    }
+
+    // 2. Try Invidious APIs (Works on Vercel)
+    const instances = [
+      "https://iv.melmac.space",
+      "https://invidious.jing.rocks",
+      "https://invidious.nerdvpn.de"
+    ];
+
+    for (const inst of instances) {
+      try {
+        const res = await fetchWithTimeout(`${inst}/api/v1/search?q=${encodeURIComponent(query)}`, { timeout: 3500 });
+        if (res.ok) {
+          const data = await res.json();
+          const videos = data.filter((v: any) => v.type === "video");
+          if (videos.length > 0) {
+            return videos.map((v: any) => {
+              const secs = v.lengthSeconds || 240;
+              const mins = Math.floor(secs / 60);
+              const rsecs = secs % 60;
+              return {
+                videoId: v.videoId,
+                title: v.title,
+                author: v.author || "Artist",
+                thumbnail: v.videoThumbnails?.[0]?.url || `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`,
+                seconds: secs,
+                timestamp: `${mins}:${rsecs.toString().padStart(2, '0')}`
+              };
+            });
+          }
+        }
+      } catch (e) {
+        console.log(`Invidious ${inst} failed.`);
+      }
+    }
+    return [];
+  }
+
+  // Search API
   app.get("/api/search", async (req, res) => {
     try {
       const query = req.query.q as string;
@@ -49,14 +106,14 @@ function startServer() {
         return res.status(400).json({ error: "Query parameter 'q' is required" });
       }
 
-      const r = await yts(query);
-      const results = (r.videos || []).slice(0, 25).map((v: any) => ({
+      const rawVideos = await resilientSearch(query);
+      const results = rawVideos.slice(0, 25).map((v: any) => ({
         id: v.videoId,
         title: v.title,
-        artist: v.author?.name || "YouTube Artist",
-        cover: v.thumbnail || v.image || '',
-        duration: v.timestamp || "4:00",
-        durationSec: v.seconds || 240,
+        artist: v.author,
+        cover: v.thumbnail,
+        duration: v.timestamp,
+        durationSec: v.seconds,
         url: `/api/stream?id=${v.videoId}`
       }));
 
@@ -74,16 +131,16 @@ function startServer() {
       if (!q) {
         return res.status(400).json({ error: "q parameter is required" });
       }
-      const r = await yts(q);
-      if (r.videos && r.videos.length > 0) {
-        const topVideo = r.videos[0];
+      const videos = await resilientSearch(q);
+      if (videos && videos.length > 0) {
+        const topVideo = videos[0];
         return res.json({
           videoId: topVideo.videoId,
           title: topVideo.title,
           duration: topVideo.timestamp,
           durationSec: topVideo.seconds,
           url: `/api/stream?id=${topVideo.videoId}`,
-          cover: topVideo.thumbnail || topVideo.image
+          cover: topVideo.thumbnail
         });
       }
       res.status(404).json({ error: "No video found" });
@@ -468,8 +525,7 @@ function startServer() {
 
       await Promise.all(categories.map(async (cat) => {
         try {
-          const r = await yts(cat.query);
-          const rawVideos = r.videos || [];
+          const rawVideos = await resilientSearch(cat.query);
           
           // Seeded shuffle based on today's date string to guarantee variations change every calendar day!
           const seededFiltered = shuffleWithSeed(rawVideos, todayStr + cat.key);
@@ -477,10 +533,10 @@ function startServer() {
           results[cat.key] = seededFiltered.slice(0, 40).map((v: any) => ({
             id: v.videoId + "_" + cat.key,
             title: v.title,
-            artist: v.author?.name || "YouTube Artist",
-            cover: v.thumbnail || v.image || '',
-            duration: v.timestamp || "4:00",
-            durationSec: v.seconds || 240,
+            artist: v.author,
+            cover: v.thumbnail,
+            duration: v.timestamp,
+            durationSec: v.seconds,
             url: `/api/stream?id=${v.videoId}`
           }));
         } catch (e) {
