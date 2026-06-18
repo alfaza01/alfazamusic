@@ -1,0 +1,6 @@
+{
+  "name": "Pemutar Musik MP3 Pribadi",
+  "description": "Aplikasi PWA Pemutar Musik MP3 Pribadi yang mendukung pencarian audio YouTube, background playback, dan pengunduhan offline.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
