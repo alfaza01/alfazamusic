@@ -4,7 +4,6 @@ import { cn } from "../../lib/utils";
 import { FullPlayer } from "../player/FullPlayer";
 import { MiniPlayer } from "../player/MiniPlayer";
 import { GlobalAudioPlayer } from "../player/GlobalAudioPlayer";
-import { PipPlayer } from "../player/PipPlayer";
 import { SongContextMenu } from "../ui/SongContextMenu";
 import { SongDetailModal } from "../ui/SongDetailModal";
 import { SongConverterModal } from "../ui/SongConverterModal";
@@ -79,8 +78,7 @@ export default function AppLayout() {
 
         <GlobalAudioPlayer />
         
-        {/* PIP Mode Special Overlay */}
-        <PipPlayer />
+
 
       </div>
     </div>
