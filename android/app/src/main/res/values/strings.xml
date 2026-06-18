@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Alfaza Music</string>
-    <string name="title_activity_main">Alfaza Music</string>
+    <string name="app_name">Music Alfaza</string>
+    <string name="title_activity_main">Music Alfaza</string>
     <string name="package_name">com.alfazacell.music</string>
     <string name="custom_url_scheme">com.alfazacell.music</string>
 </resources>
