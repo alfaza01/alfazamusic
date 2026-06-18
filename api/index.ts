@@ -170,33 +170,75 @@ app.get("/api/search", async (req: any, res: any) => {
   }
 });
 
-// STREAM (proxy via Invidious)
+// STREAM - Proxy audio dengan full pipe (CORS-safe untuk WebView Android)
 app.get("/api/stream", async (req: any, res: any) => {
   const videoId = req.query.id as string;
   if (!videoId) return res.status(400).json({ error: "id required" });
 
+  const cleanId = videoId.split('_')[0];
+
+  // Step 1: Resolve audio URL dari Invidious
+  let audioUrl: string | null = null;
   const instances = [
     "https://iv.melmac.space",
     "https://invidious.jing.rocks",
     "https://yewtu.be",
+    "https://invidious.nerdvpn.de",
   ];
 
   for (const inst of instances) {
     try {
-      const r = await fetchWithTimeout(`${inst}/api/v1/videos/${videoId}`, { timeout: 5000 });
+      const r = await fetchWithTimeout(`${inst}/api/v1/videos/${cleanId}`, { timeout: 5000 });
       if (r.ok) {
         const data: any = await r.json();
         const audios = (data.adaptiveFormats || []).filter((f: any) => f.type?.startsWith("audio/"));
-        const best = audios.find((f: any) => f.itag === 140) || audios[0];
+        const best = audios.find((f: any) => f.itag === 140) || audios.find((f: any) => f.itag === 251) || audios[0];
         if (best?.url) {
-          return res.redirect(302, best.url);
+          audioUrl = best.url;
+          break;
         }
       }
     } catch {}
   }
 
-  // Fallback
-  return res.redirect(302, `https://api.vevioz.com/api/button/mp3/${videoId}`);
+  // Step 2: Proxy URL tersebut ke client agar CORS tidak jadi masalah
+  if (audioUrl) {
+    try {
+      const clientRange = req.headers.range;
+      const headers: any = {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36",
+        "Accept": "*/*",
+      };
+      if (clientRange) headers["Range"] = clientRange;
+
+      const upstream = await fetchWithTimeout(audioUrl, { headers, timeout: 10000 });
+
+      res.status(upstream.status);
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Content-Type", upstream.headers.get("content-type") || "audio/mp4");
+      
+      const contentLength = upstream.headers.get("content-length");
+      if (contentLength) res.setHeader("Content-Length", contentLength);
+      
+      const contentRange = upstream.headers.get("content-range");
+      if (contentRange) res.setHeader("Content-Range", contentRange);
+      
+      const acceptRanges = upstream.headers.get("accept-ranges");
+      if (acceptRanges) res.setHeader("Accept-Ranges", acceptRanges);
+
+      if (upstream.body) {
+        const { Readable } = await import("stream");
+        // @ts-ignore
+        Readable.fromWeb(upstream.body).pipe(res);
+        return;
+      }
+    } catch (e) {
+      console.error("Proxy stream error:", e);
+    }
+  }
+
+  // Fallback: redirect langsung ke vevioz
+  return res.redirect(302, `https://api.vevioz.com/api/button/mp3/${cleanId}`);
 });
 
 // YOUTUBE-ID
