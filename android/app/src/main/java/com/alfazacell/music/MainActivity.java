@@ -12,8 +12,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
-    protected void onPause() {
-        // Do NOT call super.onPause() on the WebView so audio keeps playing in background
+    public void onPause() {
         super.onPause();
         WebView webView = getBridge().getWebView();
         if (webView != null) {
@@ -22,7 +21,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
-    protected void onResume() {
+    public void onResume() {
         super.onResume();
         WebView webView = getBridge().getWebView();
         if (webView != null) {
