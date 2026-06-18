@@ -31,8 +31,29 @@ export function YouTubeIframeAudioPlayer({ videoId }: Props) {
     setAudioError(null);
     setResolvedUrl('');
 
-    const streamUrl = `${BASE_URL}/api/stream?id=${cleanVideoId}`;
-    setResolvedUrl(streamUrl);
+    const resolve = async () => {
+      try {
+        // Fetch URL audio dari API (ringan, cepat, tidak proxy file besar)
+        const apiUrl = `${BASE_URL}/api/stream?id=${cleanVideoId}`;
+        const res = await fetch(apiUrl, { signal: AbortSignal.timeout(8000) });
+        
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.url) {
+            setResolvedUrl(data.url);
+            return;
+          }
+        }
+        // Fallback: coba langsung tanpa json wrapper (backward compat)
+        setResolvedUrl(apiUrl);
+      } catch (e) {
+        console.error('Failed to resolve stream URL:', e);
+        setAudioError('Gagal mendapatkan URL audio.');
+        setLoadingAudio(false);
+      }
+    };
+
+    resolve();
   }, [cleanVideoId]);
 
   // Play / Pause
