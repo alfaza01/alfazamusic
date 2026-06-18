@@ -26,7 +26,7 @@ async function fetchWithTimeout(url: string, options: any = {}) {
   }
 }
 
-async function startServer() {
+function startServer() {
   const app = express();
   const PORT = 3000;
 
@@ -490,13 +490,17 @@ async function startServer() {
   });
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
+  if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+    createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
-      configFile: path.resolve(process.cwd(), 'vite.config.js'),
+      configFile: path.resolve(process.cwd(), 'vite.config.ts'),
+    }).then((vite) => {
+      app.use(vite.middlewares);
+      app.listen(PORT, "0.0.0.0", () => {
+        console.log(`Server running on http://0.0.0.0:${PORT}`);
+      });
     });
-    app.use(vite.middlewares);
   } else {
     // Production serving
     const distPath = path.join(process.cwd(), 'dist');
@@ -504,16 +508,16 @@ async function startServer() {
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
-  }
-
-  if (!process.env.VERCEL) {
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running on http://0.0.0.0:${PORT}`);
-    });
+    
+    if (!process.env.VERCEL) {
+      app.listen(PORT, "0.0.0.0", () => {
+        console.log(`Server running on http://0.0.0.0:${PORT}`);
+      });
+    }
   }
 
   return app;
 }
 
-const appInstance = await startServer();
+const appInstance = startServer();
 export default appInstance;
