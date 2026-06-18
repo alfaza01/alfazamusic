@@ -1,179 +1,153 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { usePlayerStore } from '../../store/usePlayerStore';
 
-interface Props {
+interface YouTubeIframeAudioPlayerProps {
   videoId: string;
 }
 
-const BASE_URL = import.meta.env.VITE_API_URL || '';
-
-export function YouTubeIframeAudioPlayer({ videoId }: Props) {
+export function YouTubeIframeAudioPlayer({ videoId }: YouTubeIframeAudioPlayerProps) {
   const {
     isPlaying,
+    togglePlay,
     nextSong,
     setProgress,
     setLoadingAudio,
     setAudioError,
     seekRequest,
-    clearSeekRequest,
-    togglePlay,
-    currentSong,
+    clearSeekRequest
   } = usePlayerStore();
 
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [resolvedUrl, setResolvedUrl] = useState<string>('');
-  const cleanVideoId = videoId.split('_')[0];
+  const playerRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isReady, setIsReady] = useState(false);
 
-  // Resolve stream URL from Client (Bypass Vercel entirely)
+  // Initialize YouTube IFrame API
   useEffect(() => {
-    if (!cleanVideoId) return;
-    setLoadingAudio(true);
-    setAudioError(null);
-    setResolvedUrl('');
+    // Load YouTube API script if not already loaded
+    if (!(window as any).YT) {
+      const tag = document.createElement('script');
+      tag.src = "https://www.youtube.com/iframe_api";
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+    }
 
-    const resolveStreamClientSide = async () => {
-      const instances = [
-        "https://iv.melmac.space",
-        "https://invidious.jing.rocks",
-        "https://yewtu.be",
-        "https://invidious.nerdvpn.de",
-        "https://invidious.no-logs.com",
-      ];
+    const initPlayer = () => {
+      if (!containerRef.current) return;
 
-      for (const inst of instances) {
-        try {
-          // fetch directly from phone (bypasses CORS on Android via CapacitorHttp)
-          const apiUrl = `${inst}/api/v1/videos/${cleanVideoId}`;
-          const res = await fetch(apiUrl, { signal: AbortSignal.timeout(6000) });
-          
-          if (res.ok) {
-            const data = await res.json();
-            const audios = (data.adaptiveFormats || []).filter((f: any) => f.type?.startsWith("audio/"));
-            // Prioritize reliable itags
-            const best = audios.find((f: any) => f.itag === 140) || audios.find((f: any) => f.itag === 251) || audios[0];
-            
-            if (best?.url) {
-              console.log("Successfully resolved stream from:", inst);
-              setResolvedUrl(best.url);
-              return;
+      playerRef.current = new (window as any).YT.Player(containerRef.current, {
+        videoId: videoId,
+        playerVars: {
+          autoplay: 1,
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
+          modestbranding: 1,
+          playsinline: 1,
+          rel: 0,
+          showinfo: 0,
+          iv_load_policy: 3
+        },
+        events: {
+          onReady: (event: any) => {
+            setIsReady(true);
+            setLoadingAudio(false);
+            if (isPlaying) {
+              event.target.playVideo();
             }
+          },
+          onStateChange: (event: any) => {
+            // YT.PlayerState.PLAYING = 1, PAUSED = 2, ENDED = 0
+            if (event.data === (window as any).YT.PlayerState.PLAYING) {
+              setLoadingAudio(false);
+            } else if (event.data === (window as any).YT.PlayerState.ENDED) {
+              nextSong();
+            }
+          },
+          onError: (event: any) => {
+            console.error("YouTube Player Error:", event.data);
+            setAudioError(`YouTube playback failed (Error ${event.data})`);
+            setLoadingAudio(false);
           }
-        } catch (e) {
-          // ignore error and try next instance
         }
-      }
-
-      // If all instances fail, set error
-      console.warn("All stream servers failed for video:", cleanVideoId);
-      setAudioError("Lagu tidak tersedia saat ini. Server sibuk.");
-      setLoadingAudio(false);
+      });
     };
 
-    resolveStreamClientSide();
-  }, [cleanVideoId]);
-
-  // Play / Pause
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || !resolvedUrl) return;
-
-    if (isPlaying) {
-      audio.play().catch((e) => {
-        if (e.name === 'AbortError') return;
-        console.warn('Play error:', e);
-      });
+    if ((window as any).YT && (window as any).YT.Player) {
+      initPlayer();
     } else {
-      audio.pause();
+      (window as any).onYouTubeIframeAPIReady = initPlayer;
     }
-  }, [isPlaying, resolvedUrl]);
-
-  // Seek
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || seekRequest === null) return;
-    const target = (audio.duration || 0) * seekRequest;
-    if (isFinite(target)) audio.currentTime = target;
-    clearSeekRequest();
-  }, [seekRequest, clearSeekRequest]);
-
-  // Media Session (Lock Screen Controls)
-  useEffect(() => {
-    if (!('mediaSession' in navigator) || !currentSong) return;
-
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: currentSong.title,
-      artist: currentSong.artist,
-      album: 'Music Alfaza',
-      artwork: [
-        { src: currentSong.cover || '', sizes: '256x256', type: 'image/jpeg' },
-        { src: currentSong.cover || '', sizes: '512x512', type: 'image/jpeg' },
-      ],
-    });
-
-    navigator.mediaSession.setActionHandler('play', () => {
-      if (!usePlayerStore.getState().isPlaying) togglePlay();
-    });
-    navigator.mediaSession.setActionHandler('pause', () => {
-      if (usePlayerStore.getState().isPlaying) togglePlay();
-    });
-    navigator.mediaSession.setActionHandler('previoustrack', () =>
-      usePlayerStore.getState().prevSong()
-    );
-    navigator.mediaSession.setActionHandler('nexttrack', () =>
-      usePlayerStore.getState().nextSong()
-    );
 
     return () => {
-      ['play', 'pause', 'previoustrack', 'nexttrack'].forEach((a) => {
-        try { navigator.mediaSession.setActionHandler(a as any, null); } catch {}
-      });
+      if (playerRef.current && playerRef.current.destroy) {
+        playerRef.current.destroy();
+      }
     };
-  }, [currentSong]);
+  }, [videoId]); // Re-initialize when videoId changes
 
+  // Control Play/Pause from Store
   useEffect(() => {
-    if ('mediaSession' in navigator) {
-      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+    if (isReady && playerRef.current) {
+      if (isPlaying) {
+        playerRef.current.playVideo();
+      } else {
+        playerRef.current.pauseVideo();
+      }
     }
-  }, [isPlaying]);
+  }, [isPlaying, isReady]);
 
-  const handleTimeUpdate = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const cur = audio.currentTime;
-    const dur = isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
-    if (dur > 0) setProgress(cur / dur, cur, dur);
-
-    // Update lock screen position
-    if ('mediaSession' in navigator && dur > 0) {
-      try {
-        navigator.mediaSession.setPositionState({ duration: dur, playbackRate: 1, position: cur });
-      } catch {}
+  // Handle Seek Requests
+  useEffect(() => {
+    if (isReady && playerRef.current && seekRequest !== null) {
+      const duration = playerRef.current.getDuration() || 0;
+      const targetTime = duration * seekRequest;
+      playerRef.current.seekTo(targetTime, true);
+      clearSeekRequest();
     }
-  };
+  }, [seekRequest, isReady, clearSeekRequest]);
 
-  if (!resolvedUrl) return null;
-
-  return (
-    <audio
-      ref={audioRef}
-      src={resolvedUrl}
-      autoPlay={isPlaying}
-      onTimeUpdate={handleTimeUpdate}
-      onLoadedMetadata={() => {
-        setLoadingAudio(false);
-        if (audioRef.current && isPlaying) {
-          audioRef.current.play().catch(() => {});
+  // Sync Progress to Store
+  useEffect(() => {
+    let interval: number;
+    if (isReady && isPlaying) {
+      interval = window.setInterval(() => {
+        if (playerRef.current && playerRef.current.getCurrentTime) {
+          const current = playerRef.current.getCurrentTime();
+          const duration = playerRef.current.getDuration() || 180;
+          const percentage = duration > 0 ? (current / duration) : 0;
+          setProgress(percentage, current, duration);
+          
+          if ('mediaSession' in navigator && isFinite(current) && isFinite(duration) && duration > 0) {
+            try {
+              navigator.mediaSession.setPositionState({
+                duration: duration,
+                playbackRate: 1.0,
+                position: current
+              });
+            } catch (e) {}
+          }
         }
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isReady, isPlaying, setProgress]);
+
+  // We hide the iframe completely to treat it as an invisible "audio only" player.
+  return (
+    <div 
+      style={{
+        position: 'absolute',
+        top: '-9999px',
+        left: '-9999px',
+        width: '1px',
+        height: '1px',
+        overflow: 'hidden',
+        pointerEvents: 'none',
+        opacity: 0
       }}
-      onCanPlay={() => setLoadingAudio(false)}
-      onEnded={nextSong}
-      onError={() => {
-        setAudioError('Gagal memutar lagu. Coba lagu lain.');
-        setLoadingAudio(false);
-      }}
-      onWaiting={() => setLoadingAudio(true)}
-      onPlaying={() => setLoadingAudio(false)}
-      style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
-    />
+    >
+      <div ref={containerRef} />
+    </div>
   );
 }
+
