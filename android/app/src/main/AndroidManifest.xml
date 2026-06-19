@@ -7,6 +7,8 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
+
+        <!-- Main Activity -->
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:name=".MainActivity"
@@ -20,6 +22,19 @@
             </intent-filter>
         </activity>
 
+        <!--
+            MusicPlayerService - Foreground Service for Background Audio Playback
+            
+            foregroundServiceType="mediaPlayback" tells Android:
+            "This service is running because it is playing music - DO NOT kill it."
+            This is the official, correct way to declare background media playback on Android 10+.
+        -->
+        <service
+            android:name=".MusicPlayerService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -31,8 +46,19 @@
 
     <!-- Permissions -->
 
+    <!-- Basic internet access for streaming -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Allow the app to run a foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <!-- Specifically declare we are doing media playback (required Android 10+) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!-- Keep the CPU awake while streaming audio (used in MusicPlayerService) -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Post notifications for the persistent media control notification (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
 </manifest>
