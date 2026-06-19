@@ -8,6 +8,7 @@ import { useEffect } from 'react';
 import SplashPage from './pages/SplashPage';
 import HomePage from './pages/HomePage';
 import SearchPage from './pages/SearchPage';
+import ScloudPage from './pages/ScloudPage';
 import LibraryPage from './pages/LibraryPage';
 import ProfilePage from './pages/ProfilePage';
 import ConverterPage from './pages/ConverterPage';
@@ -39,6 +40,7 @@ export default function App() {
           <Route element={<AppLayout />}>
             <Route path="/home" element={<HomePage />} />
             <Route path="/search" element={<SearchPage />} />
+            <Route path="/scloud" element={<ScloudPage />} />
             <Route path="/library" element={<LibraryPage />} />
             <Route path="/converter" element={<ConverterPage />} />
             <Route path="/profile" element={<ProfilePage />} />

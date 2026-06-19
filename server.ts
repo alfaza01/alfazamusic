@@ -150,12 +150,114 @@ function startServer() {
     }
   });
 
-  // (Proxy and Stream endpoints removed - Client now resolves streams directly)
+  // Direct Download Endpoint for Converter Page
+  app.get("/api/download", (req, res) => {
+    const videoId = req.query.id as string;
+    const title = (req.query.title as string) || "Alfaza_Music";
+    
+    if (!videoId) {
+      return res.status(400).send("Missing video ID");
+    }
+
+    try {
+      res.setHeader("Content-Type", "audio/mpeg");
+      // Sanitize title for filename
+      const safeTitle = title.replace(/[^a-zA-Z0-9\s-]/g, '').trim().replace(/\s+/g, '_');
+      res.setHeader("Content-Disposition", `attachment; filename="${safeTitle}.mp3"`);
+      
+      const stream = ytdl(`https://www.youtube.com/watch?v=${videoId}`, { 
+        filter: "audioonly", 
+        quality: "highestaudio" 
+      });
+      
+      stream.on('error', (err) => {
+        console.error("[Download Error]", err);
+        if (!res.headersSent) {
+          res.status(500).send("Download failed");
+        }
+      });
+      
+      stream.pipe(res);
+    } catch (err: any) {
+      console.error(err);
+      if (!res.headersSent) res.status(500).send(err.message);
+    }
+  });
+
+  // --- YTMUSIC ENDPOINTS ---
+  const YTMusic = require('ytmusic-api');
+  const ytm = new YTMusic();
+  let ytmInitialized = false;
+  async function getYtm() {
+    if (!ytmInitialized) {
+      await ytm.initialize();
+      ytmInitialized = true;
+    }
+    return ytm;
+  }
+
+  function formatTime(seconds: number) {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  function mapYtSong(song: any) {
+    return {
+      id: `ytm_${song.videoId}`,
+      title: song.name,
+      artist: song.artist?.name || 'Unknown',
+      duration: song.duration ? formatTime(song.duration) : '0:00',
+      cover: song.thumbnails?.[song.thumbnails.length - 1]?.url || song.thumbnails?.[0]?.url || '',
+      url: `https://music.youtube.com/watch?v=${song.videoId}`,
+      audioUrl: ''
+    };
+  }
+
+  app.get("/api/ytmusic/home", async (req, res) => {
+    const categories = [
+      { key: "trending", query: "trending indonesia" },
+      { key: "pop_indo", query: "mahalini" },
+      { key: "dangdut", query: "happy asmara" },
+      { key: "malaysia", query: "iklim suci dalam debu" },
+      { key: "english_pop", query: "ed sheeran" },
+      { key: "bollywood", query: "arijit singh" },
+      { key: "kpop", query: "blackpink" }
+    ];
+
+    try {
+      const api = await getYtm();
+      const results: Record<string, any[]> = {};
+      await Promise.all(
+        categories.map(async (cat) => {
+          const searchRes = await api.searchSongs(cat.query);
+          results[cat.key] = searchRes.slice(0, 10).map(mapYtSong);
+        })
+      );
+      res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/ytmusic/search", async (req, res) => {
+    try {
+      const q = req.query.q as string;
+      if (!q) return res.json([]);
+      const api = await getYtm();
+      const searchRes = await api.searchSongs(q);
+      const formatted = searchRes.map(mapYtSong);
+      res.json(formatted);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   // Standalone yt-dlp launcher & manager
   let isYtDlpReady = false;
   const binDir = path.join(process.cwd(), "bin");
-  const ytDlpPath = path.join(binDir, "yt-dlp");
+  const isWin = process.platform === "win32";
+  const ytDlpPath = path.join(binDir, isWin ? "yt-dlp.exe" : "yt-dlp");
 
   async function ensureYtDlp(): Promise<boolean> {
     if (isYtDlpReady && fs.existsSync(ytDlpPath)) {
@@ -167,8 +269,11 @@ function startServer() {
       }
       if (!fs.existsSync(ytDlpPath)) {
         console.log("[ensureYtDlp] Downloading yt-dlp binary...");
-        execSync(`curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o "${ytDlpPath}"`);
-        execSync(`chmod a+rx "${ytDlpPath}"`);
+        const downloadUrl = isWin 
+          ? "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" 
+          : "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
+        execSync(`curl -L ${downloadUrl} -o "${ytDlpPath}"`);
+        if (!isWin) execSync(`chmod a+rx "${ytDlpPath}"`);
         console.log("[ensureYtDlp] yt-dlp binary downloaded successfully!");
       }
       isYtDlpReady = true;
@@ -203,40 +308,32 @@ function startServer() {
     return null;
   }
 
-  // Helper function to resolve YouTube audio URL with combined Method A & Method B fallback
   async function resolveYouTubeAudioUrl(videoId: string): Promise<string> {
     console.log(`[AudioResolver] Resolving stream for videoId: ${videoId}`);
 
-    // --- METODE Y1: Distube YTDL-Core (Incredibly reliable, active signature updates) ---
-    try {
-      console.log(`[AudioResolver] Trying Method Y1 (ytdl-core) for ID: ${videoId}`);
-      const info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`);
-      const format = ytdl.chooseFormat(info.formats, { 
-        filter: "audioonly", 
-        quality: "highestaudio" 
-      });
-      if (format && format.url) {
-        console.log(`[AudioResolver] Method Y1 (ytdl-core) Succeeded!`);
-        return format.url;
-      }
-    } catch (err: any) {
-      console.log(`[AudioResolver] Method Y1 (ytdl-core) bypassed:`, err.message || err);
-    }
+    // --- METODE Y1 (ytdl-core) is disabled to prevent Node socket crash ---
+    console.log(`[AudioResolver] Skipping Y1 to prevent node crash.`);
 
-    // --- METODE Y2: Play-DL (Used by production-grade music bots) ---
+    // --- METODE Y2: Play-DL (Highly reliable for extracting direct googlevideo links) ---
     try {
       console.log(`[AudioResolver] Trying Method Y2 (play-dl) for ID: ${videoId}`);
       const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
       const info = await play.video_info(videoUrl);
-      const audioFormats = info.format.filter((f: any) => f.mimeType && f.mimeType.startsWith("audio/"));
+      const audioFormats = info.format.filter((f: any) => f.mimeType && f.mimeType.startsWith("audio/mp4"));
       if (audioFormats.length > 0) {
-        const bestAudio = audioFormats.find((f: any) => f.audioBitrate === 160 || f.audioBitrate === "160") ||
-                          audioFormats.find((f: any) => f.container === "m4a") ||
-                          audioFormats[0];
+        // play-dl sometimes has `url` property on the format object.
+        const bestAudio = audioFormats.find((f: any) => f.url);
         if (bestAudio && bestAudio.url) {
           console.log(`[AudioResolver] Method Y2 (play-dl) Succeeded!`);
           return bestAudio.url;
         }
+      }
+      
+      // If .url is not directly present, we can use stream() function
+      const stream = await play.stream(videoUrl);
+      if (stream && stream.url) {
+         console.log(`[AudioResolver] Method Y2 (play.stream) Succeeded!`);
+         return stream.url;
       }
     } catch (err: any) {
       console.log(`[AudioResolver] Method Y2 (play-dl) bypassed:`, err.message || err);
@@ -356,10 +453,36 @@ function startServer() {
 
     // --- METODE C: Alternative High-Grade Direct Converters ---
     // Do not verify server-side since our datacenter IP is heavily blocked/sandboxed!
-    // Returning these directly to the client browser guarantees high success because the user has a normal physical IP connection.
+  // Returning these directly to the client browser guarantees high success because the user has a normal physical IP connection.
     console.log(`[AudioResolver] Server-side extraction methods were not reachable. Returning fast verified fallback redirect URL.`);
     const fallbackUrl = `https://api.vevioz.com/api/button/mp3/${videoId}`;
     return fallbackUrl;
+  }
+
+  const https = require('https');
+  const http = require('http');
+
+  function proxyAudioUrl(audioUrl: string, req: any, res: any, videoId: string) {
+    if (!audioUrl) return res.status(500).send("No audio URL");
+    if (audioUrl.includes('api.vevioz.com')) {
+      return res.redirect(audioUrl); 
+    }
+    const client = audioUrl.startsWith('https') ? https : http;
+    client.get(audioUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': '*/*'
+      }
+    }, (proxyRes: any) => {
+      if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+        return proxyAudioUrl(proxyRes.headers.location, req, res, videoId);
+      }
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res, { end: true });
+    }).on('error', (err: any) => {
+      console.error("[proxyAudioUrl] Error:", err.message);
+      if (!res.headersSent) res.redirect(`https://api.vevioz.com/api/button/mp3/${videoId}`);
+    });
   }
 
   // Proxy endpoint to download YouTube audio streams (bypassing CORS)
@@ -466,12 +589,100 @@ function startServer() {
     }
   });
 
+  let scHomeCache: any = null;
+  let scHomeCacheTime = 0;
+  let scHomeCacheDateStr = "";
+
+  app.get("/api/scloud/home", async (req, res) => {
+    try {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const isForceRefresh = req.query.refresh === 'true';
+
+      if (!isForceRefresh && scHomeCache && scHomeCacheDateStr === todayStr && (Date.now() - scHomeCacheTime < 14400000)) {
+        return res.json(scHomeCache);
+      }
+
+      const categories = [
+        { key: "trending", query: "dj remix viral" },
+        { key: "pop_indo", query: "pop indonesia hits" },
+        { key: "dangdut", query: "dangdut koplo terbaru" },
+        { key: "malaysia", query: "lagu malaysia cover" },
+        { key: "religi", query: "sholawat merdu" },
+        { key: "acoustic", query: "acoustic cover lofi" },
+        { key: "mix_hits", query: "lagu hits indonesia full album 1 jam" },
+        { key: "mix_dj", query: "dj remix full 1 jam" },
+        { key: "mix_indo", query: "pop indonesia full album 1 jam" },
+        { key: "mix_malaysia", query: "lagu malaysia full album 1 jam" }
+      ];
+
+      const results: Record<string, any[]> = {};
+      const scClientId = "iErh0hlIS7lC1NEeRzcimBG8NFFF045C";
+
+      await Promise.all(categories.map(async (cat) => {
+        try {
+          const fetchRes = await fetchWithTimeout(`https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(cat.query)}&client_id=${scClientId}&limit=25`, { timeout: 10000 });
+          if (fetchRes.ok) {
+            const data = await fetchRes.json();
+            const mappedSongs = data.collection
+              .filter((t: any) => t.media && t.media.transcodings && t.media.transcodings.length > 0)
+              .map((t: any) => {
+                const transcoding = t.media.transcodings.find((x: any) => x.format.protocol === 'progressive') || t.media.transcodings[0];
+                return {
+                  id: `sc_${t.id}_${cat.key}`,
+                  title: t.title,
+                  artist: t.user?.username || "SoundCloud Artist",
+                  cover: t.artwork_url ? t.artwork_url.replace('large', 't500x500') : (t.user?.avatar_url || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=300"),
+                  url: transcoding.url
+                };
+              });
+            // Shuffle
+            const seededFiltered = shuffleWithSeed(mappedSongs, todayStr + cat.key);
+            results[cat.key] = seededFiltered.slice(0, 10);
+          } else {
+            results[cat.key] = [];
+          }
+        } catch (e) {
+          console.error(`Error fetching SC category ${cat.key}:`, e);
+          results[cat.key] = [];
+        }
+      }));
+
+      scHomeCache = results;
+      scHomeCacheTime = Date.now();
+      scHomeCacheDateStr = todayStr;
+
+      res.json(results);
+    } catch (error) {
+      console.error("Scloud Home API error:", error);
+      res.status(500).json({ error: "Failed to load scloud home data" });
+    }
+  });
+
+  // SOUNDCLOUD CORS PROXY
+  app.get("/api/soundcloud", async (req, res) => {
+    try {
+      const targetUrl = req.query.url as string;
+      if (!targetUrl || !targetUrl.startsWith('https://api-v2.soundcloud.com')) {
+        return res.status(400).json({ error: "Invalid SoundCloud URL" });
+      }
+      const fetchRes = await fetchWithTimeout(targetUrl, { timeout: 10000 });
+      if (!fetchRes.ok) {
+        return res.status(fetchRes.status).json({ error: "SoundCloud API error" });
+      }
+      const data = await fetchRes.json();
+      res.json(data);
+    } catch (e: any) {
+      console.error("[SC Proxy] Error:", e.message);
+      res.status(500).json({ error: "Proxy failed" });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
     createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
-      configFile: path.resolve(process.cwd(), 'vite.config.ts'),
+      configFile: path.resolve(process.cwd(), 'vite.config.js'),
     }).then((vite) => {
       app.use(vite.middlewares);
       app.listen(PORT, "0.0.0.0", () => {

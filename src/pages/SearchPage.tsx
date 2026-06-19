@@ -1,11 +1,9 @@
-import { Search as SearchIcon, History, TrendingUp, X, Loader2, Music, Mic2, Radio, Disc3, Flame, Music2, CloudLightning } from "lucide-react";
+import { Search as SearchIcon, History, TrendingUp, X, Loader2, Music, Mic2, Radio, Disc3, Flame, Music2 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { ListSongCard } from "../components/ui/ListSongCard";
 import { Song } from "../types";
 import { usePlayerStore } from "../store/usePlayerStore";
-
-const SC_CLIENT_ID = "iErh0hlIS7lC1NEeRzcimBG8NFFF045C";
 
 export default function SearchPage() {
   const [query, setQuery] = useState("");
@@ -25,33 +23,17 @@ export default function SearchPage() {
     const timer = setTimeout(async () => {
       setIsSearching(true);
       try {
-        const res = await fetch(`https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&client_id=${SC_CLIENT_ID}&limit=20`);
+        const res = await fetch(import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api/search?q=${encodeURIComponent(query)}` : `/api/search?q=${encodeURIComponent(query)}`);
         if (res.ok) {
           const data = await res.json();
-          // Map SoundCloud API response to our Song interface
-          const mappedSongs: Song[] = data.collection
-            .filter((t: any) => t.media && t.media.transcodings && t.media.transcodings.length > 0)
-            .map((t: any) => {
-              // Get progressive mp3 stream if available, else fallback
-              const transcoding = t.media.transcodings.find((x: any) => x.format.protocol === 'progressive') || t.media.transcodings[0];
-              
-              return {
-                id: `sc_${t.id}`,
-                title: t.title,
-                artist: t.user?.username || "SoundCloud Artist",
-                // Get highest quality artwork
-                cover: t.artwork_url ? t.artwork_url.replace('large', 't500x500') : (t.user?.avatar_url || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=300"),
-                url: transcoding.url // We store the API URL here to resolve the actual MP3 later
-              };
-            });
-          setSearchResults(mappedSongs);
+          setSearchResults(data);
         }
       } catch (err) {
-        console.error("SoundCloud search failed", err);
+        console.error("Search failed", err);
       } finally {
         setIsSearching(false);
       }
-    }, 800); // 800ms debounce
+    }, 600); // 600ms debounce
 
     return () => clearTimeout(timer);
   }, [query]);
@@ -62,15 +44,15 @@ export default function SearchPage() {
   };
 
   const genres = [
-    { name: "DJ Remix", icon: Disc3, color: "from-orange-500 via-red-500 to-rose-600", shadow: "shadow-orange-500/20" },
-    { name: "Acoustic Cover", icon: Music2, color: "from-blue-400 via-indigo-500 to-purple-600", shadow: "shadow-blue-500/20" },
-    { name: "Lofi Beats", icon: Music, color: "from-pink-400 via-fuchsia-500 to-purple-600", shadow: "shadow-pink-500/20" },
-    { name: "Sholawat", icon: Mic2, color: "from-emerald-400 via-teal-500 to-cyan-600", shadow: "shadow-emerald-500/20" },
-    { name: "Podcast Indo", icon: Radio, color: "from-amber-400 via-orange-500 to-red-500", shadow: "shadow-amber-500/20" },
-    { name: "EDM", icon: CloudLightning, color: "from-slate-700 via-slate-800 to-slate-900", shadow: "shadow-slate-500/20" }
+    { name: "Pop Indo", icon: Mic2, color: "from-blue-500 via-indigo-500 to-purple-600", shadow: "shadow-blue-500/20" },
+    { name: "Global Hits", icon: Flame, color: "from-orange-400 via-red-500 to-rose-600", shadow: "shadow-orange-500/20" },
+    { name: "Dangdut", icon: Radio, color: "from-emerald-400 via-teal-500 to-cyan-600", shadow: "shadow-emerald-500/20" },
+    { name: "Acoustic", icon: Music2, color: "from-amber-400 via-orange-500 to-red-500", shadow: "shadow-amber-500/20" },
+    { name: "Rock", icon: Disc3, color: "from-slate-700 via-slate-800 to-slate-900", shadow: "shadow-slate-500/20" },
+    { name: "Lofi", icon: Music, color: "from-pink-400 via-fuchsia-500 to-purple-600", shadow: "shadow-pink-500/20" }
   ];
 
-  const history = ["Alan Walker", "Dj Tiktok Viral", "Mahalini Cover", "Lagu Galau", "Ncs Release", "Lofi Girl"];
+  const history = ["Coldplay", "Cover Akustik", "Lagu Viral", "Pop Indonesia", "Nostalgia", "DJ Remix"];
 
   return (
     <div className="flex flex-col min-h-screen bg-slate-50 dark:bg-[#0f172a]">
@@ -82,18 +64,18 @@ export default function SearchPage() {
           <motion.h1 
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-orange-500 to-rose-500"
+            className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-slate-900 to-slate-600 dark:from-white dark:to-slate-400"
           >
-            SoundCloud
+            Pencarian
           </motion.h1>
           
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className={`flex items-center gap-3 bg-white dark:bg-slate-800/80 border rounded-2xl px-4 py-3.5 transition-all duration-300 ${isFocused ? 'border-orange-500 ring-4 ring-orange-500/10 shadow-lg shadow-orange-500/5 dark:bg-slate-800' : 'border-slate-200 dark:border-slate-700/50 shadow-sm hover:border-slate-300 dark:hover:border-slate-600'}`}
+            className={`flex items-center gap-3 bg-white dark:bg-slate-800/80 border rounded-2xl px-4 py-3.5 transition-all duration-300 ${isFocused ? 'border-primary ring-4 ring-primary/10 shadow-lg shadow-primary/5 dark:bg-slate-800' : 'border-slate-200 dark:border-slate-700/50 shadow-sm hover:border-slate-300 dark:hover:border-slate-600'}`}
           >
-            <SearchIcon size={20} className={`transition-colors duration-300 ${isFocused ? 'text-orange-500' : 'text-slate-400 dark:text-slate-500'}`} />
+            <SearchIcon size={20} className={`transition-colors duration-300 ${isFocused ? 'text-primary' : 'text-slate-400 dark:text-slate-500'}`} />
             <input 
               ref={inputRef}
               type="text" 
@@ -101,7 +83,7 @@ export default function SearchPage() {
               onChange={(e) => setQuery(e.target.value)}
               onFocus={() => setIsFocused(true)}
               onBlur={() => setIsFocused(false)}
-              placeholder="Cari lagu, remix, atau artis SoundCloud..."
+              placeholder="Artis, lagu, atau podcast..."
               className="flex-1 bg-transparent border-none outline-none text-[15px] font-medium text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 w-full"
             />
             <AnimatePresence>
@@ -138,7 +120,7 @@ export default function SearchPage() {
               {/* History Category */}
               <div>
                 <h3 className="text-[13px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-                  <History size={16} /> Pencarian Populer SC
+                  <History size={16} /> Pencarian Terakhir
                 </h3>
                 <div className="flex flex-wrap gap-2.5">
                   {history.map((item, idx) => (
@@ -150,7 +132,7 @@ export default function SearchPage() {
                       whileTap={{ scale: 0.95 }}
                       key={item} 
                       onClick={() => setQuery(item)} 
-                      className="px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700/50 rounded-xl text-[13px] font-semibold text-slate-700 dark:text-slate-200 cursor-pointer shadow-sm hover:shadow hover:border-orange-500/30 hover:text-orange-500 dark:hover:text-orange-500 transition-all"
+                      className="px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700/50 rounded-xl text-[13px] font-semibold text-slate-700 dark:text-slate-200 cursor-pointer shadow-sm hover:shadow hover:border-primary/30 hover:text-primary dark:hover:text-primary transition-all"
                     >
                       {item}
                     </motion.span>
@@ -161,7 +143,7 @@ export default function SearchPage() {
               {/* Trending Searches Grid */}
               <div>
                 <h3 className="text-[13px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-                  <TrendingUp size={16} /> Genre Eksklusif SC
+                  <TrendingUp size={16} /> Jelajahi Genre
                 </h3>
                 <div className="grid grid-cols-2 gap-3.5">
                   {genres.map((item, i) => (
@@ -199,7 +181,7 @@ export default function SearchPage() {
             >
               <div className="flex items-center justify-between mb-4 ml-1">
                 <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  <span>Hasil SoundCloud</span>
+                  <span>Hasil Teratas</span>
                 </h3>
                 <AnimatePresence>
                   {isSearching && (
@@ -207,7 +189,7 @@ export default function SearchPage() {
                       initial={{ opacity: 0, scale: 0.5 }}
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.5 }}
-                      className="flex items-center gap-2 bg-orange-500/10 text-orange-500 px-3 py-1 rounded-full text-xs font-bold"
+                      className="flex items-center gap-2 bg-primary/10 text-primary px-3 py-1 rounded-full text-xs font-bold"
                     >
                       <Loader2 size={12} className="animate-spin" />
                       Mencari...
@@ -258,12 +240,12 @@ export default function SearchPage() {
                     animate={{ opacity: 1, scale: 1 }}
                     className="py-16 flex flex-col items-center justify-center text-center"
                   >
-                    <div className="w-20 h-20 bg-orange-500/10 rounded-full flex items-center justify-center mb-4 shadow-inner">
-                      <SearchIcon size={32} className="text-orange-500" />
+                    <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4 shadow-inner">
+                      <SearchIcon size={32} className="text-slate-400 dark:text-slate-500" />
                     </div>
                     <h4 className="text-lg font-bold text-slate-800 dark:text-white mb-1">Tidak Ditemukan</h4>
                     <p className="text-sm text-slate-500 dark:text-slate-400 max-w-[250px]">
-                      Maaf, kami tidak dapat menemukan lagu atau remix "{query}" di SoundCloud.
+                      Maaf, kami tidak dapat menemukan lagu atau artis dengan kata kunci "{query}".
                     </p>
                   </motion.div>
                 ) : null}

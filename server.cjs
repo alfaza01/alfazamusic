@@ -4,6 +4,10 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -20,13 +24,18 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // server.ts
+var server_exports = {};
+__export(server_exports, {
+  default: () => server_default
+});
+module.exports = __toCommonJS(server_exports);
 var import_express = __toESM(require("express"), 1);
 var import_path = __toESM(require("path"), 1);
 var import_yt_search = __toESM(require("yt-search"), 1);
 var import_vite = require("vite");
-var import_stream = require("stream");
 var import_fs = __toESM(require("fs"), 1);
 var import_child_process = require("child_process");
 var import_ytdl_core = __toESM(require("@distube/ytdl-core"), 1);
@@ -47,23 +56,83 @@ async function fetchWithTimeout(url, options = {}) {
     throw error;
   }
 }
-async function startServer() {
+function startServer() {
   const app = (0, import_express.default)();
   const PORT = 3e3;
+  app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, PATCH, DELETE");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    if (req.method === "OPTIONS") {
+      return res.status(200).end();
+    }
+    next();
+  });
+  async function resilientSearch(query) {
+    try {
+      const ytsPromise = (0, import_yt_search.default)(query);
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 3e3));
+      const r = await Promise.race([ytsPromise, timeoutPromise]);
+      if (r && r.videos && r.videos.length > 0) {
+        return r.videos.map((v) => ({
+          videoId: v.videoId,
+          title: v.title,
+          author: v.author?.name || "YouTube Artist",
+          thumbnail: v.thumbnail || v.image || "",
+          seconds: v.seconds || 240,
+          timestamp: v.timestamp || "4:00"
+        }));
+      }
+    } catch (e) {
+      console.log("yt-search blocked or timed out, falling back to Invidious APIs...");
+    }
+    const instances = [
+      "https://iv.melmac.space",
+      "https://invidious.jing.rocks",
+      "https://invidious.nerdvpn.de"
+    ];
+    for (const inst of instances) {
+      try {
+        const res = await fetchWithTimeout(`${inst}/api/v1/search?q=${encodeURIComponent(query)}`, { timeout: 3500 });
+        if (res.ok) {
+          const data = await res.json();
+          const videos = data.filter((v) => v.type === "video");
+          if (videos.length > 0) {
+            return videos.map((v) => {
+              const secs = v.lengthSeconds || 240;
+              const mins = Math.floor(secs / 60);
+              const rsecs = secs % 60;
+              return {
+                videoId: v.videoId,
+                title: v.title,
+                author: v.author || "Artist",
+                thumbnail: v.videoThumbnails?.[0]?.url || `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`,
+                seconds: secs,
+                timestamp: `${mins}:${rsecs.toString().padStart(2, "0")}`
+              };
+            });
+          }
+        }
+      } catch (e) {
+        console.log(`Invidious ${inst} failed.`);
+      }
+    }
+    return [];
+  }
   app.get("/api/search", async (req, res) => {
     try {
       const query = req.query.q;
       if (!query) {
         return res.status(400).json({ error: "Query parameter 'q' is required" });
       }
-      const r = await (0, import_yt_search.default)(query);
-      const results = (r.videos || []).slice(0, 25).map((v) => ({
+      const rawVideos = await resilientSearch(query);
+      const results = rawVideos.slice(0, 25).map((v) => ({
         id: v.videoId,
         title: v.title,
-        artist: v.author?.name || "YouTube Artist",
-        cover: v.thumbnail || v.image || "",
-        duration: v.timestamp || "4:00",
-        durationSec: v.seconds || 240,
+        artist: v.author,
+        cover: v.thumbnail,
+        duration: v.timestamp,
+        durationSec: v.seconds,
         url: `/api/stream?id=${v.videoId}`
       }));
       res.json(results);
@@ -78,16 +147,16 @@ async function startServer() {
       if (!q) {
         return res.status(400).json({ error: "q parameter is required" });
       }
-      const r = await (0, import_yt_search.default)(q);
-      if (r.videos && r.videos.length > 0) {
-        const topVideo = r.videos[0];
+      const videos = await resilientSearch(q);
+      if (videos && videos.length > 0) {
+        const topVideo = videos[0];
         return res.json({
           videoId: topVideo.videoId,
           title: topVideo.title,
           duration: topVideo.timestamp,
           durationSec: topVideo.seconds,
           url: `/api/stream?id=${topVideo.videoId}`,
-          cover: topVideo.thumbnail || topVideo.image
+          cover: topVideo.thumbnail
         });
       }
       res.status(404).json({ error: "No video found" });
@@ -96,85 +165,98 @@ async function startServer() {
       res.status(500).json({ error: e.message || "Failed to search video" });
     }
   });
-  async function proxyAudioUrl(url, req, res, videoIdForFallback, isFallback = false) {
-    try {
-      console.log(`[ProxyAudio] Proxying URL: ${url} (isFallback: ${isFallback})`);
-      if (url.includes("api.vevioz.com") || url.includes("t-fest.pl")) {
-        console.log(`[ProxyAudio] External web resource detected (${url}). Redirecting client directly.`);
-        return res.redirect(302, url);
-      }
-      const clientRange = req.headers.range;
-      const headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "*/*"
-      };
-      if (clientRange) {
-        headers["Range"] = clientRange;
-      }
-      const remoteRes = await fetchWithTimeout(url, {
-        headers,
-        timeout: 15e3
-      });
-      if (!remoteRes.ok && (remoteRes.status === 403 || remoteRes.status === 410)) {
-        if (!isFallback) {
-          console.warn(`[ProxyAudio] Remote status ${remoteRes.status}. Retrying via fallback proxy...`);
-          const fallbackUrl = `https://api.vevioz.com/api/button/mp3/${videoIdForFallback}`;
-          return proxyAudioUrl(fallbackUrl, req, res, videoIdForFallback, true);
-        }
-      }
-      if (!remoteRes.ok) {
-        throw new Error(`Remote stream provider responded with status ${remoteRes.status} ${remoteRes.statusText}`);
-      }
-      res.status(remoteRes.status);
-      const headersToForward = [
-        "content-type",
-        "content-length",
-        "content-range",
-        "accept-ranges",
-        "cache-control"
-      ];
-      for (const h of headersToForward) {
-        const val = remoteRes.headers.get(h);
-        if (val) {
-          res.setHeader(h, val);
-        }
-      }
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      if (remoteRes.body) {
-        import_stream.Readable.fromWeb(remoteRes.body).pipe(res);
-      } else {
-        res.status(500).json({ error: "Remote source body is empty" });
-      }
-    } catch (e) {
-      console.warn(`[ProxyAudio] Error while proxying URL ${url}:`, e.message || e);
-      if (res.headersSent) {
-        return;
-      }
-      const finalFallback = `https://api.vevioz.com/api/button/mp3/${videoIdForFallback}`;
-      console.log(`[ProxyAudio] Error recovery Redirect: Redirecting browser directly to ${finalFallback}`);
-      return res.redirect(302, finalFallback);
-    }
-  }
-  app.get("/api/stream", async (req, res) => {
+  app.get("/api/download", (req, res) => {
     const videoId = req.query.id;
+    const title = req.query.title || "Alfaza_Music";
     if (!videoId) {
-      return res.status(400).json({ error: "id parameter is required" });
+      return res.status(400).send("Missing video ID");
     }
     try {
-      console.log(`[Stream] Stream request initiated for video: ${videoId}`);
-      const streamUrl = await resolveYouTubeAudioUrl(videoId);
-      console.log(`[Stream] Dynamic stream source resolved. Proxying stream to client: ${streamUrl}`);
-      return proxyAudioUrl(streamUrl, req, res, videoId);
-    } catch (error) {
-      console.error("Stream resolution endpoint error:", error);
-      const emergencyFallback = `https://api.vevioz.com/api/button/mp3/${videoId}`;
-      console.log(`[Stream] Error fallback triggered. Proxying fallback: ${emergencyFallback}`);
-      return proxyAudioUrl(emergencyFallback, req, res, videoId);
+      res.setHeader("Content-Type", "audio/mpeg");
+      const safeTitle = title.replace(/[^a-zA-Z0-9\s-]/g, "").trim().replace(/\s+/g, "_");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeTitle}.mp3"`);
+      const stream = (0, import_ytdl_core.default)(`https://www.youtube.com/watch?v=${videoId}`, {
+        filter: "audioonly",
+        quality: "highestaudio"
+      });
+      stream.on("error", (err) => {
+        console.error("[Download Error]", err);
+        if (!res.headersSent) {
+          res.status(500).send("Download failed");
+        }
+      });
+      stream.pipe(res);
+    } catch (err) {
+      console.error(err);
+      if (!res.headersSent) res.status(500).send(err.message);
+    }
+  });
+  const YTMusic = require("ytmusic-api");
+  const ytm = new YTMusic();
+  let ytmInitialized = false;
+  async function getYtm() {
+    if (!ytmInitialized) {
+      await ytm.initialize();
+      ytmInitialized = true;
+    }
+    return ytm;
+  }
+  function formatTime(seconds) {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  }
+  function mapYtSong(song) {
+    return {
+      id: `ytm_${song.videoId}`,
+      title: song.name,
+      artist: song.artist?.name || "Unknown",
+      duration: song.duration ? formatTime(song.duration) : "0:00",
+      cover: song.thumbnails?.[song.thumbnails.length - 1]?.url || song.thumbnails?.[0]?.url || "",
+      url: `https://music.youtube.com/watch?v=${song.videoId}`,
+      audioUrl: ""
+    };
+  }
+  app.get("/api/ytmusic/home", async (req, res) => {
+    const categories = [
+      { key: "trending", query: "trending indonesia" },
+      { key: "pop_indo", query: "mahalini" },
+      { key: "dangdut", query: "happy asmara" },
+      { key: "malaysia", query: "iklim suci dalam debu" },
+      { key: "english_pop", query: "ed sheeran" },
+      { key: "bollywood", query: "arijit singh" },
+      { key: "kpop", query: "blackpink" }
+    ];
+    try {
+      const api = await getYtm();
+      const results = {};
+      await Promise.all(
+        categories.map(async (cat) => {
+          const searchRes = await api.searchSongs(cat.query);
+          results[cat.key] = searchRes.slice(0, 10).map(mapYtSong);
+        })
+      );
+      res.json(results);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  app.get("/api/ytmusic/search", async (req, res) => {
+    try {
+      const q = req.query.q;
+      if (!q) return res.json([]);
+      const api = await getYtm();
+      const searchRes = await api.searchSongs(q);
+      const formatted = searchRes.map(mapYtSong);
+      res.json(formatted);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
   });
   let isYtDlpReady = false;
   const binDir = import_path.default.join(process.cwd(), "bin");
-  const ytDlpPath = import_path.default.join(binDir, "yt-dlp");
+  const isWin = process.platform === "win32";
+  const ytDlpPath = import_path.default.join(binDir, isWin ? "yt-dlp.exe" : "yt-dlp");
   async function ensureYtDlp() {
     if (isYtDlpReady && import_fs.default.existsSync(ytDlpPath)) {
       return true;
@@ -185,8 +267,9 @@ async function startServer() {
       }
       if (!import_fs.default.existsSync(ytDlpPath)) {
         console.log("[ensureYtDlp] Downloading yt-dlp binary...");
-        (0, import_child_process.execSync)(`curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o "${ytDlpPath}"`);
-        (0, import_child_process.execSync)(`chmod a+rx "${ytDlpPath}"`);
+        const downloadUrl = isWin ? "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" : "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
+        (0, import_child_process.execSync)(`curl -L ${downloadUrl} -o "${ytDlpPath}"`);
+        if (!isWin) (0, import_child_process.execSync)(`chmod a+rx "${ytDlpPath}"`);
         console.log("[ensureYtDlp] yt-dlp binary downloaded successfully!");
       }
       isYtDlpReady = true;
@@ -220,31 +303,23 @@ async function startServer() {
   }
   async function resolveYouTubeAudioUrl(videoId) {
     console.log(`[AudioResolver] Resolving stream for videoId: ${videoId}`);
-    try {
-      console.log(`[AudioResolver] Trying Method Y1 (ytdl-core) for ID: ${videoId}`);
-      const info = await import_ytdl_core.default.getInfo(`https://www.youtube.com/watch?v=${videoId}`);
-      const format = import_ytdl_core.default.chooseFormat(info.formats, {
-        filter: "audioonly",
-        quality: "highestaudio"
-      });
-      if (format && format.url) {
-        console.log(`[AudioResolver] Method Y1 (ytdl-core) Succeeded!`);
-        return format.url;
-      }
-    } catch (err) {
-      console.log(`[AudioResolver] Method Y1 (ytdl-core) bypassed:`, err.message || err);
-    }
+    console.log(`[AudioResolver] Skipping Y1 to prevent node crash.`);
     try {
       console.log(`[AudioResolver] Trying Method Y2 (play-dl) for ID: ${videoId}`);
       const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
       const info = await import_play_dl.default.video_info(videoUrl);
-      const audioFormats = info.format.filter((f) => f.mimeType && f.mimeType.startsWith("audio/"));
+      const audioFormats = info.format.filter((f) => f.mimeType && f.mimeType.startsWith("audio/mp4"));
       if (audioFormats.length > 0) {
-        const bestAudio = audioFormats.find((f) => f.audioBitrate === 160 || f.audioBitrate === "160") || audioFormats.find((f) => f.container === "m4a") || audioFormats[0];
+        const bestAudio = audioFormats.find((f) => f.url);
         if (bestAudio && bestAudio.url) {
           console.log(`[AudioResolver] Method Y2 (play-dl) Succeeded!`);
           return bestAudio.url;
         }
+      }
+      const stream = await import_play_dl.default.stream(videoUrl);
+      if (stream && stream.url) {
+        console.log(`[AudioResolver] Method Y2 (play.stream) Succeeded!`);
+        return stream.url;
       }
     } catch (err) {
       console.log(`[AudioResolver] Method Y2 (play-dl) bypassed:`, err.message || err);
@@ -347,6 +422,30 @@ async function startServer() {
     const fallbackUrl = `https://api.vevioz.com/api/button/mp3/${videoId}`;
     return fallbackUrl;
   }
+  const https = require("https");
+  const http = require("http");
+  function proxyAudioUrl(audioUrl, req, res, videoId) {
+    if (!audioUrl) return res.status(500).send("No audio URL");
+    if (audioUrl.includes("api.vevioz.com")) {
+      return res.redirect(audioUrl);
+    }
+    const client = audioUrl.startsWith("https") ? https : http;
+    client.get(audioUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "*/*"
+      }
+    }, (proxyRes) => {
+      if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+        return proxyAudioUrl(proxyRes.headers.location, req, res, videoId);
+      }
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res, { end: true });
+    }).on("error", (err) => {
+      console.error("[proxyAudioUrl] Error:", err.message);
+      if (!res.headersSent) res.redirect(`https://api.vevioz.com/api/button/mp3/${videoId}`);
+    });
+  }
   app.get("/api/proxy-download", async (req, res) => {
     const videoId = req.query.id;
     if (!videoId) {
@@ -406,16 +505,15 @@ async function startServer() {
       const results = {};
       await Promise.all(categories.map(async (cat) => {
         try {
-          const r = await (0, import_yt_search.default)(cat.query);
-          const rawVideos = r.videos || [];
+          const rawVideos = await resilientSearch(cat.query);
           const seededFiltered = shuffleWithSeed(rawVideos, todayStr + cat.key);
           results[cat.key] = seededFiltered.slice(0, 40).map((v) => ({
             id: v.videoId + "_" + cat.key,
             title: v.title,
-            artist: v.author?.name || "YouTube Artist",
-            cover: v.thumbnail || v.image || "",
-            duration: v.timestamp || "4:00",
-            durationSec: v.seconds || 240,
+            artist: v.author,
+            cover: v.thumbnail,
+            duration: v.timestamp,
+            durationSec: v.seconds,
             url: `/api/stream?id=${v.videoId}`
           }));
         } catch (e) {
@@ -432,22 +530,105 @@ async function startServer() {
       res.status(500).json({ error: "Failed to load home data" });
     }
   });
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await (0, import_vite.createServer)({
+  let scHomeCache = null;
+  let scHomeCacheTime = 0;
+  let scHomeCacheDateStr = "";
+  app.get("/api/scloud/home", async (req, res) => {
+    try {
+      const todayStr = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const isForceRefresh = req.query.refresh === "true";
+      if (!isForceRefresh && scHomeCache && scHomeCacheDateStr === todayStr && Date.now() - scHomeCacheTime < 144e5) {
+        return res.json(scHomeCache);
+      }
+      const categories = [
+        { key: "trending", query: "dj remix viral" },
+        { key: "pop_indo", query: "pop indonesia hits" },
+        { key: "dangdut", query: "dangdut koplo terbaru" },
+        { key: "malaysia", query: "lagu malaysia cover" },
+        { key: "religi", query: "sholawat merdu" },
+        { key: "acoustic", query: "acoustic cover lofi" },
+        { key: "mix_hits", query: "lagu hits indonesia full album 1 jam" },
+        { key: "mix_dj", query: "dj remix full 1 jam" },
+        { key: "mix_indo", query: "pop indonesia full album 1 jam" },
+        { key: "mix_malaysia", query: "lagu malaysia full album 1 jam" }
+      ];
+      const results = {};
+      const scClientId = "iErh0hlIS7lC1NEeRzcimBG8NFFF045C";
+      await Promise.all(categories.map(async (cat) => {
+        try {
+          const fetchRes = await fetchWithTimeout(`https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(cat.query)}&client_id=${scClientId}&limit=25`, { timeout: 1e4 });
+          if (fetchRes.ok) {
+            const data = await fetchRes.json();
+            const mappedSongs = data.collection.filter((t) => t.media && t.media.transcodings && t.media.transcodings.length > 0).map((t) => {
+              const transcoding = t.media.transcodings.find((x) => x.format.protocol === "progressive") || t.media.transcodings[0];
+              return {
+                id: `sc_${t.id}_${cat.key}`,
+                title: t.title,
+                artist: t.user?.username || "SoundCloud Artist",
+                cover: t.artwork_url ? t.artwork_url.replace("large", "t500x500") : t.user?.avatar_url || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=300",
+                url: transcoding.url
+              };
+            });
+            const seededFiltered = shuffleWithSeed(mappedSongs, todayStr + cat.key);
+            results[cat.key] = seededFiltered.slice(0, 10);
+          } else {
+            results[cat.key] = [];
+          }
+        } catch (e) {
+          console.error(`Error fetching SC category ${cat.key}:`, e);
+          results[cat.key] = [];
+        }
+      }));
+      scHomeCache = results;
+      scHomeCacheTime = Date.now();
+      scHomeCacheDateStr = todayStr;
+      res.json(results);
+    } catch (error) {
+      console.error("Scloud Home API error:", error);
+      res.status(500).json({ error: "Failed to load scloud home data" });
+    }
+  });
+  app.get("/api/soundcloud", async (req, res) => {
+    try {
+      const targetUrl = req.query.url;
+      if (!targetUrl || !targetUrl.startsWith("https://api-v2.soundcloud.com")) {
+        return res.status(400).json({ error: "Invalid SoundCloud URL" });
+      }
+      const fetchRes = await fetchWithTimeout(targetUrl, { timeout: 1e4 });
+      if (!fetchRes.ok) {
+        return res.status(fetchRes.status).json({ error: "SoundCloud API error" });
+      }
+      const data = await fetchRes.json();
+      res.json(data);
+    } catch (e) {
+      console.error("[SC Proxy] Error:", e.message);
+      res.status(500).json({ error: "Proxy failed" });
+    }
+  });
+  if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+    (0, import_vite.createServer)({
       server: { middlewareMode: true },
       appType: "spa",
       configFile: import_path.default.resolve(process.cwd(), "vite.config.js")
+    }).then((vite) => {
+      app.use(vite.middlewares);
+      app.listen(PORT, "0.0.0.0", () => {
+        console.log(`Server running on http://0.0.0.0:${PORT}`);
+      });
     });
-    app.use(vite.middlewares);
   } else {
     const distPath = import_path.default.join(process.cwd(), "dist");
     app.use(import_express.default.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(import_path.default.join(distPath, "index.html"));
     });
+    if (!process.env.VERCEL) {
+      app.listen(PORT, "0.0.0.0", () => {
+        console.log(`Server running on http://0.0.0.0:${PORT}`);
+      });
+    }
   }
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
-  });
+  return app;
 }
-startServer();
+var appInstance = startServer();
+var server_default = appInstance;

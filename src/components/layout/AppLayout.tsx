@@ -1,5 +1,5 @@
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { Home, Search, Library, User, Sparkles } from "lucide-react";
+import { Home, Search, Library, User, Sparkles, Cloud, Globe } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { FullPlayer } from "../player/FullPlayer";
 import { MiniPlayer } from "../player/MiniPlayer";
@@ -15,8 +15,8 @@ export default function AppLayout() {
 
   const navItems = [
     { path: "/home", icon: Home, label: "Home" },
-    { path: "/search", icon: Search, label: "Search" },
-    { path: "/library", icon: Library, label: "Library" },
+    { path: "/scloud", icon: Cloud, label: "Scloud" },
+    { path: "/library", icon: Globe, label: "YT Music" },
     { path: "/converter", icon: Sparkles, label: "Converter" },
     { path: "/profile", icon: User, label: "Profile" },
   ];

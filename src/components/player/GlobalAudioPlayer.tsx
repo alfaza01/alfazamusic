@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import ReactPlayer from 'react-player/youtube';
+import ReactPlayer from 'react-player';
 import { usePlayerStore } from '../../store/usePlayerStore';
 import { getSavedSongs } from '../../lib/db';
 
@@ -37,14 +37,30 @@ export function GlobalAudioPlayer() {
     setAudioError(null);
 
     const checkSongSource = async () => {
-      // Case A: Local / downloaded MP3 stored in IndexedDB
+      // Case A: Local / downloaded MP3 stored in IndexedDB or direct Saavn stream
       if (
         currentSong.id.startsWith('local_') ||
+        currentSong.id.startsWith('saavn_') ||
+        currentSong.id.startsWith('ytm_') ||
         currentSong.url === 'local_blob' ||
         currentSong.url?.startsWith('blob:')
       ) {
         setIsLocal(true);
         try {
+          if (currentSong.id.startsWith('saavn_')) {
+            setLocalAudioUrl(currentSong.url || '');
+            return;
+          }
+
+          if (currentSong.id.startsWith('ytm_')) {
+            const cleanVideoId = currentSong.id.replace('ytm_', '');
+            const proxyUrl = import.meta.env.VITE_API_URL 
+              ? `${import.meta.env.VITE_API_URL}/api/proxy-download?id=${cleanVideoId}`
+              : `/api/proxy-download?id=${cleanVideoId}`;
+            setLocalAudioUrl(proxyUrl);
+            return;
+          }
+          
           const savedSongs = await getSavedSongs();
           const matched = savedSongs.find(s => s.id === currentSong.id);
           if (matched?.blob) {
@@ -57,13 +73,14 @@ export function GlobalAudioPlayer() {
           setAudioError("Gagal memuat lagu offline.");
           setLoadingAudio(false);
         }
-      } 
+      }  
       // Case B: SoundCloud Song (Native Audio)
       else if (currentSong.id.startsWith('sc_')) {
         setIsLocal(true); // Treat as native audio element
         try {
           const scClientId = "iErh0hlIS7lC1NEeRzcimBG8NFFF045C";
-          const resolveRes = await fetch(`${currentSong.url}?client_id=${scClientId}`);
+          const targetUrl = encodeURIComponent(`${currentSong.url}?client_id=${scClientId}`);
+          const resolveRes = await fetch(`/api/soundcloud?url=${targetUrl}`);
           if (resolveRes.ok) {
             const data = await resolveRes.json();
             if (data.url) {
@@ -78,11 +95,14 @@ export function GlobalAudioPlayer() {
           setLoadingAudio(false);
         }
       } 
-      // Case C: Online YouTube song — use ReactPlayer (IFrame)
+      // Case C: Online YouTube song — proxy download bypass to fix embed blocks
       else {
-        setIsLocal(false);
-        const cleanVideoId = currentSong.id.split('_')[0];
-        setYtVideoId(cleanVideoId);
+        setIsLocal(true);
+        const cleanVideoId = currentSong.id.replace('ytm_', '').split('_')[0];
+        const proxyUrl = import.meta.env.VITE_API_URL 
+          ? `${import.meta.env.VITE_API_URL}/api/proxy-download?id=${cleanVideoId}`
+          : `/api/proxy-download?id=${cleanVideoId}`;
+        setLocalAudioUrl(proxyUrl);
       }
     };
 
