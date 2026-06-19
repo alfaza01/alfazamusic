@@ -57,8 +57,29 @@ export function GlobalAudioPlayer() {
           setAudioError("Gagal memuat lagu offline.");
           setLoadingAudio(false);
         }
-      } else {
-        // Case B: Online YouTube song — use ReactPlayer (IFrame)
+      } 
+      // Case B: SoundCloud Song (Native Audio)
+      else if (currentSong.id.startsWith('sc_')) {
+        setIsLocal(true); // Treat as native audio element
+        try {
+          const scClientId = "iErh0hlIS7lC1NEeRzcimBG8NFFF045C";
+          const resolveRes = await fetch(`${currentSong.url}?client_id=${scClientId}`);
+          if (resolveRes.ok) {
+            const data = await resolveRes.json();
+            if (data.url) {
+              setLocalAudioUrl(data.url);
+              return;
+            }
+          }
+          throw new Error("Gagal resolusi SoundCloud");
+        } catch (e) {
+          console.error("SC resolve error:", e);
+          setAudioError("Gagal memuat lagu SoundCloud.");
+          setLoadingAudio(false);
+        }
+      } 
+      // Case C: Online YouTube song — use ReactPlayer (IFrame)
+      else {
         setIsLocal(false);
         const cleanVideoId = currentSong.id.split('_')[0];
         setYtVideoId(cleanVideoId);
