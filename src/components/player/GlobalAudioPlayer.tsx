@@ -212,39 +212,69 @@ export function GlobalAudioPlayer() {
   };
 
   /**
-   * AUTO-RETRY HANDLER — This is "Lapis 3" protection.
+   * SMART RECOVERY HANDLER — "Lapis 3" protection.
    *
-   * When the audio element fires 'stalled' or 'waiting', it usually means the
-   * stream URL has expired (Google cuts off the stream after ~6 hours, and
-   * sometimes much sooner on mobile connections).
+   * Strategy:
+   *   1st attempt (retryCount = 0): wait 3s → try re-resolve fresh URL for the SAME song
+   *   2nd attempt (retryCount = 1): wait 4s → skip to NEXT SONG automatically
    *
-   * We detect this after a 3-second grace period and re-resolve a fresh URL.
+   * This way:
+   * - Expired URLs get refreshed silently (user doesn't notice)
+   * - If the server is fully down, we don't hang forever — we move on
    */
   const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryCountRef   = useRef<number>(0); // tracks how many retries for current song
+
+  // Reset retry counter whenever song changes successfully
+  useEffect(() => {
+    retryCountRef.current = 0;
+  }, [currentSong?.id]);
 
   const handleStalled = () => {
     if (!currentSong || currentSong.id.startsWith('local_')) return;
-    // Clear any previous retry
     if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
-    retryTimeoutRef.current = setTimeout(() => {
-      console.warn('[AudioPlayer] Stream stalled — re-resolving URL...');
-      resolveUrl(currentSong);
-    }, 3000);
+
+    if (retryCountRef.current === 0) {
+      // 1st stall: re-resolve URL for same song
+      retryTimeoutRef.current = setTimeout(() => {
+        console.warn('[AudioPlayer] Stream stalled — attempt 1: re-resolving URL...');
+        retryCountRef.current = 1;
+        resolveUrl(currentSong);
+      }, 3000);
+    } else {
+      // 2nd stall: skip to next song
+      retryTimeoutRef.current = setTimeout(() => {
+        console.warn('[AudioPlayer] Stream still broken — skipping to next song...');
+        retryCountRef.current = 0;
+        nextSong();
+      }, 4000);
+    }
   };
 
   const handleError = () => {
-    if (audioRef.current?.error?.code === 1) return; // MEDIA_ERR_ABORTED = user-triggered, ignore
+    if (audioRef.current?.error?.code === 1) return; // MEDIA_ERR_ABORTED = ignore
     if (!currentSong || currentSong.id.startsWith('local_')) {
       setAudioError("Pemutaran lagu lokal gagal.");
       setLoadingAudio(false);
       return;
     }
-    // For online songs, try re-resolving a fresh stream URL
-    console.warn('[AudioPlayer] Audio error — re-resolving stream URL...');
     if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
-    retryTimeoutRef.current = setTimeout(() => {
-      resolveUrl(currentSong);
-    }, 2000);
+
+    if (retryCountRef.current === 0) {
+      // 1st error: try re-resolving URL
+      console.warn('[AudioPlayer] Audio error — attempt 1: re-resolving URL...');
+      retryTimeoutRef.current = setTimeout(() => {
+        retryCountRef.current = 1;
+        resolveUrl(currentSong);
+      }, 2000);
+    } else {
+      // 2nd error: give up and skip to next song
+      console.warn('[AudioPlayer] Audio still broken — skipping to next song...');
+      retryTimeoutRef.current = setTimeout(() => {
+        retryCountRef.current = 0;
+        nextSong();
+      }, 3000);
+    }
   };
 
   // Cleanup retry timer on unmount
