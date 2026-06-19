@@ -49,17 +49,6 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
-    /**
-     * Only stop the service when the user explicitly removes the app from recents.
-     * This means: if user just minimizes/locks screen, service KEEPS RUNNING.
-     * Only when user swipes away from recent apps does the service stop.
-     */
-    @Override
-    public void onTaskRemoved(Intent rootIntent) {
-        super.onTaskRemoved(rootIntent);
-        stopMusicService();
-    }
-
     // -------------------------------------------------------------------------
     // Private Helpers
     // -------------------------------------------------------------------------
@@ -74,10 +63,6 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
-    private void stopMusicService() {
-        Intent serviceIntent = new Intent(this, MusicPlayerService.class);
-        stopService(serviceIntent);
-    }
 
     /**
      * Configure WebView to support background audio and media playback.
