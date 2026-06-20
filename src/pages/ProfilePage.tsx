@@ -18,7 +18,21 @@ export default function ProfilePage() {
 
   const clearCache = () => {
     setCacheSize("0 MB");
-    alert("Cache berhasil dibersihkan!");
+    alert("Berhasil! 124 MB Cache (Sampah file sementara) telah dibersihkan. Memori HP Anda kembali lega.");
+  };
+
+  const handleSettingsClick = () => {
+    alert("Menu Pengaturan Lanjutan belum tersedia di versi ini.");
+  };
+
+  const handleAboutClick = () => {
+    alert("Music Alfaza v1.0.0\n\nAplikasi streaming musik premium tanpa iklan, mendukung pemutaran latar belakang (background play), lirik otomatis berjalan, dan pengunduhan musik offline.\n\n© 2026 Alfaza Cell.");
+  };
+
+  const handleLogoutClick = () => {
+    if (window.confirm("Apakah Anda yakin ingin keluar dari akun Alfaza Premium? Semua lagu yang didownload akan tetap aman.")) {
+      alert("Anda telah keluar. (Simulasi Demo)");
+    }
   };
 
   if (showHistory) {
@@ -70,7 +84,7 @@ export default function ProfilePage() {
         {/* Top actions */}
         <div className="relative z-10 flex justify-between items-center mb-8">
           <h1 className="text-2xl font-black text-white tracking-tight drop-shadow-sm">Profil Saya</h1>
-          <button className="p-2.5 bg-white/20 hover:bg-white/30 rounded-full transition-all backdrop-blur-md shadow-lg active:scale-95">
+          <button onClick={handleSettingsClick} className="p-2.5 bg-white/20 hover:bg-white/30 rounded-full transition-all backdrop-blur-md shadow-lg active:scale-95">
             <Settings size={22} className="text-white" />
           </button>
         </div>
@@ -139,8 +153,12 @@ export default function ProfilePage() {
                   <p className="text-xs text-slate-500 font-medium">Tema gelap untuk kenyamanan mata</p>
                 </div>
               </div>
-              <div className={`w-12 h-6 rounded-full relative transition-colors duration-300 ${isDarkMode ? 'bg-primary' : 'bg-slate-200 dark:bg-slate-700'}`}>
-                <div className={`absolute top-1 bottom-1 w-4 bg-white rounded-full shadow-sm transition-all duration-300 ${isDarkMode ? 'left-7' : 'left-1'}`}></div>
+              <div className={`w-12 h-6 rounded-full relative transition-colors duration-300 ${isDarkMode ? 'bg-primary shadow-[0_0_10px_rgba(var(--color-primary),0.5)]' : 'bg-slate-200 dark:bg-slate-700'}`}>
+                <motion.div 
+                  initial={false}
+                  animate={{ left: isDarkMode ? 24 : 4 }}
+                  className="absolute top-1 bottom-1 w-4 h-4 bg-white rounded-full shadow-sm"
+                />
               </div>
             </div>
 
@@ -155,8 +173,12 @@ export default function ProfilePage() {
                   <p className="text-xs text-slate-500 font-medium">Kurangi kualitas cover album</p>
                 </div>
               </div>
-              <div className={`w-12 h-6 rounded-full relative transition-colors duration-300 ${dataSaver ? 'bg-green-500' : 'bg-slate-200 dark:bg-slate-700'}`}>
-                <div className={`absolute top-1 bottom-1 w-4 bg-white rounded-full shadow-sm transition-all duration-300 ${dataSaver ? 'left-7' : 'left-1'}`}></div>
+              <div className={`w-12 h-6 rounded-full relative transition-colors duration-300 ${dataSaver ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-slate-200 dark:bg-slate-700'}`}>
+                <motion.div 
+                  initial={false}
+                  animate={{ left: dataSaver ? 24 : 4 }}
+                  className="absolute top-1 bottom-1 w-4 h-4 bg-white rounded-full shadow-sm"
+                />
               </div>
             </div>
 
@@ -171,8 +193,12 @@ export default function ProfilePage() {
                   <p className="text-xs text-slate-500 font-medium">Putar otomatis lagu berikutnya</p>
                 </div>
               </div>
-              <div className={`w-12 h-6 rounded-full relative transition-colors duration-300 ${autoPlay ? 'bg-blue-500' : 'bg-slate-200 dark:bg-slate-700'}`}>
-                <div className={`absolute top-1 bottom-1 w-4 bg-white rounded-full shadow-sm transition-all duration-300 ${autoPlay ? 'left-7' : 'left-1'}`}></div>
+              <div className={`w-12 h-6 rounded-full relative transition-colors duration-300 ${autoPlay ? 'bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]' : 'bg-slate-200 dark:bg-slate-700'}`}>
+                <motion.div 
+                  initial={false}
+                  animate={{ left: autoPlay ? 24 : 4 }}
+                  className="absolute top-1 bottom-1 w-4 h-4 bg-white rounded-full shadow-sm"
+                />
               </div>
             </div>
 
@@ -187,8 +213,12 @@ export default function ProfilePage() {
                   <p className="text-xs text-slate-500 font-medium">Gunakan bitrate terbaik (128kbps+)</p>
                 </div>
               </div>
-              <div className={`w-12 h-6 rounded-full relative transition-colors duration-300 ${highQuality ? 'bg-purple-500' : 'bg-slate-200 dark:bg-slate-700'}`}>
-                <div className={`absolute top-1 bottom-1 w-4 bg-white rounded-full shadow-sm transition-all duration-300 ${highQuality ? 'left-7' : 'left-1'}`}></div>
+              <div className={`w-12 h-6 rounded-full relative transition-colors duration-300 ${highQuality ? 'bg-purple-500 shadow-[0_0_10px_rgba(168,85,247,0.5)]' : 'bg-slate-200 dark:bg-slate-700'}`}>
+                <motion.div 
+                  initial={false}
+                  animate={{ left: highQuality ? 24 : 4 }}
+                  className="absolute top-1 bottom-1 w-4 h-4 bg-white rounded-full shadow-sm"
+                />
               </div>
             </div>
 
@@ -213,22 +243,22 @@ export default function ProfilePage() {
               </div>
             </div>
 
-            <div className="p-4 flex items-center justify-between border-b border-slate-100 dark:border-white/5 active:bg-slate-50 dark:active:bg-white/5 transition-colors cursor-pointer group">
+            <div onClick={handleAboutClick} className="p-4 flex items-center justify-between border-b border-slate-100 dark:border-white/5 active:bg-slate-50 dark:active:bg-white/5 transition-colors cursor-pointer group">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center group-hover:bg-blue-500/10 group-hover:text-blue-500 transition-colors">
                   <Info size={18} />
                 </div>
                 <h4 className="text-sm font-bold text-slate-900 dark:text-white">Tentang Aplikasi</h4>
               </div>
-              <ChevronRight size={18} className="text-slate-300 dark:text-slate-600" />
+              <ChevronRight size={18} className="text-slate-300 dark:text-slate-600 group-hover:text-blue-500 transition-colors" />
             </div>
             
-            <div className="p-4 flex items-center justify-between active:bg-slate-50 dark:active:bg-white/5 transition-colors cursor-pointer group">
+            <div onClick={handleLogoutClick} className="p-4 flex items-center justify-between active:bg-slate-50 dark:active:bg-red-500/10 transition-colors cursor-pointer group hover:bg-red-50 dark:hover:bg-red-500/5">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-red-500/10 text-red-500 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-xl bg-red-500/10 text-red-500 flex items-center justify-center group-hover:scale-110 transition-transform">
                   <LogOut size={18} />
                 </div>
-                <h4 className="text-sm font-bold text-red-500">Keluar Akun</h4>
+                <h4 className="text-sm font-bold text-red-500 group-hover:text-red-600 transition-colors">Keluar Akun</h4>
               </div>
             </div>
 

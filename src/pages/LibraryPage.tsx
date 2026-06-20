@@ -125,7 +125,7 @@ export default function LibraryPage() {
             </h1>
           </div>
         </div>
-        <div className="px-4 pt-4 pb-24 flex flex-col gap-2">
+        <div className="px-4 pt-4 pb-24 grid grid-cols-2 gap-4">
           <AnimatePresence>
             {activeCategory.songs.map((song, i) => (
               <motion.div
@@ -134,7 +134,7 @@ export default function LibraryPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05 }}
               >
-                <ListSongCard song={song} onClick={() => handlePlaySong(song, activeCategory.songs)} />
+                <SongCard song={song} className="w-full" onClick={() => handlePlaySong(song, activeCategory.songs)} />
               </motion.div>
             ))}
           </AnimatePresence>

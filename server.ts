@@ -295,7 +295,7 @@ function startServer() {
       const cmd = `"${ytDlpPath}" -g -f bestaudio "${targetUrl}"`;
       // By using stdio: ['ignore', 'pipe', 'ignore'], we completely silence stderr to avoid errors leaking to logs
       const resolvedUrl = execSync(cmd, { 
-        timeout: 8000,
+        timeout: 25000, // INCREASED TIMEOUT to 25s because yt-dlp can be slow to boot
         stdio: ["ignore", "pipe", "ignore"]
       }).toString().trim();
       if (resolvedUrl && (resolvedUrl.startsWith("http://") || resolvedUrl.startsWith("https://"))) {
@@ -303,13 +303,77 @@ function startServer() {
         return resolvedUrl;
       }
     } catch (err: any) {
-      console.log(`[resolveWithYtDlp] Direct yt-dlp bypass not available for video ${videoId} (IP likely blocked, using proxy fallbacks).`);
+      console.log(`[resolveWithYtDlp] Direct yt-dlp bypass not available for video ${videoId}. Timeout or error.`);
     }
     return null;
   }
 
-  async function resolveYouTubeAudioUrl(videoId: string): Promise<string> {
-    console.log(`[AudioResolver] Resolving stream for videoId: ${videoId}`);
+  // --- METODE BARU: AuraMusic (MusicCuba) InnerTube Native Logic ---
+  // Meniru sama persis request ke youtubei/v1/player menggunakan PoToken
+  async function resolveWithInnerTube(videoId: string, poToken?: string): Promise<string | null> {
+    console.log(`[InnerTube] Executing native AuraMusic logic for: ${videoId}`);
+    try {
+      const payload = {
+        context: {
+          client: {
+            clientName: "WEB_REMIX",
+            clientVersion: "1.20230725.01.00",
+            hl: "id",
+            gl: "ID"
+          }
+        },
+        videoId: videoId,
+        playbackContext: {
+          contentPlaybackContext: {
+            signatureTimestamp: 19740 // Atau hasil fetch dinamis
+          }
+        },
+        serviceIntegrityDimensions: poToken ? {
+          poToken: poToken
+        } : undefined
+      };
+
+      const res = await fetchWithTimeout("https://music.youtube.com/youtubei/v1/player?prettyPrint=false", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Origin": "https://music.youtube.com",
+          "X-YouTube-Client-Name": "67",
+          "X-YouTube-Client-Version": "1.20230725.01.00",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        },
+        body: JSON.stringify(payload),
+        timeout: 8000
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.playabilityStatus?.status === 'OK' && data.streamingData?.adaptiveFormats) {
+          const formats = data.streamingData.adaptiveFormats;
+          const audio = formats.find((f: any) => f.mimeType && f.mimeType.includes("audio/mp4")) ||
+                        formats.find((f: any) => f.mimeType && f.mimeType.includes("audio/"));
+          if (audio && audio.url) {
+             console.log(`[InnerTube] BERHASIL! Mendapatkan URL Stream Native Google.`);
+             return audio.url;
+          }
+        } else {
+           console.log(`[InnerTube] Status tidak OK atau tidak ada stream:`, data.playabilityStatus?.status);
+        }
+      }
+    } catch (e: any) {
+      console.error(`[InnerTube] Gagal mengeksekusi request:`, e.message);
+    }
+    return null;
+  }
+
+  async function resolveYouTubeAudioUrl(videoId: string, poToken?: string): Promise<string> {
+    console.log(`[AudioResolver] Resolving stream for videoId: ${videoId} with poToken: ${poToken ? "YES" : "NO"}`);
+
+    // --- METODE BARU: AuraMusic Native InnerTube Player ---
+    if (poToken) {
+      const innerTubeUrl = await resolveWithInnerTube(videoId, poToken);
+      if (innerTubeUrl) return innerTubeUrl;
+    }
 
     // --- METODE Y1 (ytdl-core) is disabled to prevent Node socket crash ---
     console.log(`[AudioResolver] Skipping Y1 to prevent node crash.`);
@@ -430,9 +494,7 @@ function startServer() {
           body: JSON.stringify({
             url: `https://www.youtube.com/watch?v=${videoId}`,
             isAudioOnly: true,
-            downloadMode: "audio",
-            audioFormat: "mp3",
-            audioBitrate: "128"
+            aFormat: "mp3"
           }),
           timeout: 6000
         });
@@ -452,10 +514,9 @@ function startServer() {
     }
 
     // --- METODE C: Alternative High-Grade Direct Converters ---
-    // Do not verify server-side since our datacenter IP is heavily blocked/sandboxed!
-  // Returning these directly to the client browser guarantees high success because the user has a normal physical IP connection.
     console.log(`[AudioResolver] Server-side extraction methods were not reachable. Returning fast verified fallback redirect URL.`);
-    const fallbackUrl = `https://api.vevioz.com/api/button/mp3/${videoId}`;
+    // Using an alternative fallback since Vevioz is dead
+    const fallbackUrl = `https://invidious.jing.rocks/latest_version?id=${videoId}&itag=140`;
     return fallbackUrl;
   }
 
@@ -464,8 +525,8 @@ function startServer() {
 
   function proxyAudioUrl(audioUrl: string, req: any, res: any, videoId: string) {
     if (!audioUrl) return res.status(500).send("No audio URL");
-    if (audioUrl.includes('api.vevioz.com')) {
-      return res.redirect(audioUrl); 
+    if (audioUrl.includes('vevioz.com')) {
+      return res.redirect(`https://invidious.jing.rocks/latest_version?id=${videoId}&itag=140`); 
     }
     const client = audioUrl.startsWith('https') ? https : http;
     client.get(audioUrl, {
@@ -481,25 +542,27 @@ function startServer() {
       proxyRes.pipe(res, { end: true });
     }).on('error', (err: any) => {
       console.error("[proxyAudioUrl] Error:", err.message);
-      if (!res.headersSent) res.redirect(`https://api.vevioz.com/api/button/mp3/${videoId}`);
+      if (!res.headersSent) res.redirect(`https://invidious.jing.rocks/latest_version?id=${videoId}&itag=140`);
     });
   }
 
   // Proxy endpoint to download YouTube audio streams (bypassing CORS)
   app.get("/api/proxy-download", async (req, res) => {
     const videoId = req.query.id as string;
+    const poToken = req.query.potoken as string | undefined;
+
     if (!videoId) {
       return res.status(400).json({ error: "id parameter is required" });
     }
 
     try {
       console.log(`[Proxy-Download] Resolving audio stream URL for videoId: ${videoId}`);
-      const audioUrl = await resolveYouTubeAudioUrl(videoId);
+      const audioUrl = await resolveYouTubeAudioUrl(videoId, poToken);
       console.log(`[Proxy-Download] Proxying download stream: ${audioUrl}`);
       return proxyAudioUrl(audioUrl, req, res, videoId);
     } catch (error: any) {
       console.error("Proxy-Download endpoint error:", error);
-      const emergencyFallback = `https://api.vevioz.com/api/button/mp3/${videoId}`;
+      const emergencyFallback = `https://invidious.jing.rocks/latest_version?id=${videoId}&itag=140`;
       console.log(`[Proxy-Download] Error fallback triggered. Proxying: ${emergencyFallback}`);
       return proxyAudioUrl(emergencyFallback, req, res, videoId);
     }
@@ -556,7 +619,8 @@ function startServer() {
 
       const results: Record<string, any[]> = {};
 
-      await Promise.all(categories.map(async (cat) => {
+      // Fetch sequentially to avoid YouTube rate limiting (429 Too Many Requests)
+      for (const cat of categories) {
         try {
           const rawVideos = await resilientSearch(cat.query);
           
@@ -576,7 +640,10 @@ function startServer() {
           console.error(`Error fetching category ${cat.key}:`, e);
           results[cat.key] = [];
         }
-      }));
+        
+        // Add a small delay between requests to further prevent rate limiting
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
 
       homeCache = results;
       homeCacheTime = Date.now();

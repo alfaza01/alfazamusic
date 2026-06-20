@@ -57,7 +57,9 @@ export const usePlayerStore = create<PlayerState>((set) => ({
     queue: newQueue || state.queue,
     progressPercent: 0,
     currentTimeSec: 0,
-    audioError: null
+    totalDurationSec: 0,
+    audioError: null,
+    isLoadingAudio: true,
   })),
 
   togglePlay: () => set((state) => ({ 

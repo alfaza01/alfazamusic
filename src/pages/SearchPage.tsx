@@ -10,8 +10,33 @@ export default function SearchPage() {
   const [isFocused, setIsFocused] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<Song[]>([]);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const playSong = usePlayerStore(state => state.playSong);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const stored = localStorage.getItem('music_recent_searches');
+    if (stored) {
+      try {
+        setRecentSearches(JSON.parse(stored));
+      } catch (e) {
+        setRecentSearches(["Coldplay", "Pop Indonesia", "Nostalgia", "DJ Remix"]);
+      }
+    } else {
+      setRecentSearches(["Coldplay", "Pop Indonesia", "Nostalgia", "DJ Remix"]);
+    }
+  }, []);
+
+  const addRecentSearch = (term: string) => {
+    const clean = term.trim();
+    if (!clean) return;
+    setRecentSearches(prev => {
+      let updated = [clean, ...prev.filter(s => s.toLowerCase() !== clean.toLowerCase())];
+      if (updated.length > 8) updated = updated.slice(0, 8);
+      localStorage.setItem('music_recent_searches', JSON.stringify(updated));
+      return updated;
+    });
+  };
 
   useEffect(() => {
     if (query.trim().length === 0) {
@@ -27,6 +52,9 @@ export default function SearchPage() {
         if (res.ok) {
           const data = await res.json();
           setSearchResults(data);
+          if (data && data.length > 0) {
+            addRecentSearch(query);
+          }
         }
       } catch (err) {
         console.error("Search failed", err);
@@ -51,8 +79,6 @@ export default function SearchPage() {
     { name: "Rock", icon: Disc3, color: "from-slate-700 via-slate-800 to-slate-900", shadow: "shadow-slate-500/20" },
     { name: "Lofi", icon: Music, color: "from-pink-400 via-fuchsia-500 to-purple-600", shadow: "shadow-pink-500/20" }
   ];
-
-  const history = ["Coldplay", "Cover Akustik", "Lagu Viral", "Pop Indonesia", "Nostalgia", "DJ Remix"];
 
   return (
     <div className="flex flex-col min-h-screen bg-slate-50 dark:bg-[#0f172a]">
@@ -123,7 +149,7 @@ export default function SearchPage() {
                   <History size={16} /> Pencarian Terakhir
                 </h3>
                 <div className="flex flex-wrap gap-2.5">
-                  {history.map((item, idx) => (
+                  {recentSearches.map((item, idx) => (
                     <motion.span 
                       initial={{ opacity: 0, scale: 0.9 }}
                       animate={{ opacity: 1, scale: 1 }}

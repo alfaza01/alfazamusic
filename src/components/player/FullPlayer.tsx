@@ -1,10 +1,11 @@
-import { Play, Pause, SkipForward, SkipBack, Share2, Heart, ListMusic, ChevronDown, Repeat, Shuffle, Download, Loader2, Sparkles } from "lucide-react";
+import { Play, Pause, SkipForward, SkipBack, Share2, Heart, ChevronDown, Repeat, Shuffle, Download, Loader2, Sparkles, Mic2, Tv2, Image as ImageIcon } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { usePlayerStore } from "../../store/usePlayerStore";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { saveSong, isSongDownloaded } from "../../lib/db";
 import { StreamLoadingProgress } from "./StreamLoadingProgress";
 import { useMenuStore } from "../../store/useMenuStore";
+import { generatePoToken } from "../../lib/poToken";
 
 function parseDuration(durationStr: string) {
   const parts = durationStr.split(':');
@@ -30,6 +31,202 @@ export function FullPlayer() {
   const [isDownloaded, setIsDownloaded] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
+  const [viewMode, setViewMode] = useState<'cover' | 'lyrics' | 'video'>('cover');
+  const [lyrics, setLyrics] = useState<string | null>(null);
+  const [syncedLyrics, setSyncedLyrics] = useState<{time: number, text: string}[]>([]);
+  const [loadingLyrics, setLoadingLyrics] = useState(false);
+  
+  const lyricsContainerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll lirik berjalan
+  useEffect(() => {
+    if (viewMode === 'lyrics' && syncedLyrics.length > 0 && lyricsContainerRef.current) {
+      const container = lyricsContainerRef.current;
+      const activeElement = container.querySelector('.lyric-active');
+      if (activeElement) {
+        activeElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [currentTimeSec, viewMode, syncedLyrics]);
+
+  useEffect(() => {
+    // Reset view mode and lyrics when song changes
+    setLyrics(null);
+    setSyncedLyrics([]);
+    setViewMode('cover');
+  }, [currentSong]);
+
+  const loadLyrics = async () => {
+    if (lyrics || loadingLyrics) return;
+    setLoadingLyrics(true);
+    try {
+      let foundLyrics: string | null = null;
+      let parsedSync: {time: number, text: string}[] = [];
+
+      // ── Helper: parse LRC time-tag ──────────────────────────────────────
+      const parseTimeTag = (lines: string[]) => {
+        const result: {time: number, text: string}[] = [];
+        for (const line of lines) {
+          const match = line.match(/^\[(\d{2}):(\d{2}\.\d{2,3})\](.*)/);
+          if (match) {
+            const mins = parseInt(match[1]);
+            const secs = parseFloat(match[2]);
+            const time = mins * 60 + secs;
+            const text = match[3].replace(/<.*?>/g, '').trim();
+            if (text) result.push({ time, text });
+          }
+        }
+        return result;
+      };
+
+      // ── Helper: bersihkan noise dari judul ──────────────────────────────
+      const cleanSongTitle = (title: string) =>
+        title
+          .replace(/\(.*?\)|\[.*?\]/g, '')
+          .replace(/\b(official|music|video|lyric|audio|hd|hq|vevo|mv|full)\b/gi, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+      // ── Helper: ekstrak Video ID ─────────────────────────────────────────
+      const getVideoId = (id: string) => {
+        if (id.includes('v=')) return id.split('v=')[1].split('&')[0];
+        if (id.includes('youtu.be/')) return id.split('youtu.be/')[1].split('?')[0];
+        return id.replace('ytm_', '').split('_')[0];
+      };
+
+      const cleanVideoId = getVideoId(currentSong.id);
+
+      // ── Deteksi kompilasi / lagu panjang ────────────────────────────────
+      const compilationKeywords = /\b(1\s*jam|2\s*jam|3\s*jam|full\s*album|kumpulan|kompilasi|mixtape|non\s*stop|nonstop|playlist|medley|best\s*of|greatest\s*hits|top\s*\d+)\b/i;
+      const isCompilation =
+        (currentSong.durationSec != null && currentSong.durationSec > 900) ||
+        compilationKeywords.test(currentSong.title);
+
+      // ─── 1. SimpMusic API (YouTube Music — paling akurat) ───────────────
+      if (cleanVideoId.length === 11) {
+        try {
+          const res = await fetch(`https://api-lyrics.simpmusic.org/v1/${cleanVideoId}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && data.data && data.data.length > 0) {
+              const track = data.data[0];
+              if (track.richSyncLyrics || track.syncedLyrics) {
+                const rawSync = track.richSyncLyrics || track.syncedLyrics;
+                parsedSync = parseTimeTag(rawSync.split('\n'));
+                foundLyrics = track.plainLyrics || parsedSync.map((p: any) => p.text).join('\n');
+              } else if (track.plainLyrics) {
+                foundLyrics = track.plainLyrics;
+              }
+            }
+          }
+        } catch (e) {
+          console.log('SimpMusic API gagal, mencoba fallback...');
+        }
+      }
+
+      // ─── 2. LRCLIB (lirik sinkron — banyak lagu Indonesia) ──────────────
+      if (!foundLyrics) {
+        let cleanTitle = cleanSongTitle(currentSong.title);
+        let queryArtist = currentSong.artist.replace(/\s*-\s*Topic$/i, '').trim();
+        if (cleanTitle.includes(' - ')) {
+          const parts = cleanTitle.split(' - ');
+          queryArtist = parts[0].trim();
+          cleanTitle = parts[1].trim();
+        }
+        try {
+          const res = await fetch(
+            `https://lrclib.net/api/search?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(queryArtist)}`
+          );
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.length > 0) {
+              const resultTrack = data[0].trackName?.toLowerCase().trim() || '';
+              const searchTitleLower = cleanTitle.toLowerCase().trim();
+              const resultArtist = data[0].artistName?.toLowerCase().trim() || '';
+              const searchArtistLower = queryArtist.toLowerCase().trim();
+              const isTitleMatch = resultTrack === searchTitleLower ||
+                                   resultTrack.includes(searchTitleLower) ||
+                                   searchTitleLower.includes(resultTrack);
+              const isArtistMatch = resultArtist.includes(searchArtistLower) ||
+                                    searchArtistLower.includes(resultArtist) ||
+                                    searchArtistLower === 'youtube artist' ||
+                                    searchArtistLower === 'various artists';
+              if ((isTitleMatch && isArtistMatch) || resultTrack === searchTitleLower) {
+                if (data[0].syncedLyrics) {
+                  parsedSync = parseTimeTag(data[0].syncedLyrics.split('\n'));
+                }
+                foundLyrics = data[0].plainLyrics ||
+                              (data[0].syncedLyrics?.replace(/\[.*?\]/g, '') ?? null);
+              }
+            }
+          }
+        } catch (e) {
+          console.log('LRCLIB gagal, mencoba fallback berikutnya...');
+        }
+      }
+
+      // ─── 3. Lyrics.ovh (gratis, tanpa auth — database lagu lawas luas) ──
+      if (!foundLyrics) {
+        let cleanTitle = cleanSongTitle(currentSong.title);
+        let queryArtist = currentSong.artist.replace(/\s*-\s*Topic$/i, '').trim();
+        if (cleanTitle.includes(' - ')) {
+          const parts = cleanTitle.split(' - ');
+          queryArtist = parts[0].trim();
+          cleanTitle = parts[1].trim();
+        }
+        try {
+          const res = await fetch(
+            `https://api.lyrics.ovh/v1/${encodeURIComponent(queryArtist)}/${encodeURIComponent(cleanTitle)}`
+          );
+          if (res.ok) {
+            const data = await res.json();
+            if (data.lyrics && data.lyrics.trim().length > 30) {
+              foundLyrics = data.lyrics.trim();
+              // lyrics.ovh tidak menyediakan sinkronisasi waktu
+              parsedSync = [];
+            }
+          }
+        } catch (e) {
+          console.log('Lyrics.ovh gagal...');
+        }
+      }
+
+      // ── Decode HTML entities & set state ────────────────────────────────
+      if (foundLyrics) {
+        foundLyrics = foundLyrics
+          .replace(/&#x27;/g, "'")
+          .replace(/&#39;/g, "'")
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&#x2F;/g, '/')
+          .replace(/&nbsp;/g, ' ');
+        setLyrics(foundLyrics);
+        setSyncedLyrics(parsedSync);
+      } else if (isCompilation) {
+        setLyrics(
+          `🎶 Lagu Kompilasi / Medley\n\n` +
+          `Lagu ini adalah kumpulan beberapa lagu sekaligus, sehingga lirik sinkron tidak tersedia.\n\n` +
+          `Gunakan fitur Video 🎬 untuk menonton visualnya!`
+        );
+      } else {
+        setLyrics('😔 Lirik belum tersedia untuk lagu ini.\n\nCoba putar lagu lain atau cek koneksi internet.');
+      }
+    } catch (e) {
+      setLyrics('Gagal memuat lirik. Periksa koneksi internet Anda.');
+    } finally {
+      setLoadingLyrics(false);
+    }
+  };
+
+  const handleViewModeChange = (mode: 'cover' | 'lyrics' | 'video') => {
+    setViewMode(mode);
+    if (mode === 'lyrics') {
+      loadLyrics();
+    }
+  };
+
   // Check if current song is downloaded already
   useEffect(() => {
     if (currentSong && isPlayerOpen) {
@@ -40,10 +237,16 @@ export function FullPlayer() {
   if (!currentSong) return null;
 
   const handleDownload = async () => {
-    const videoId = currentSong.id.split('_')[0];
-    const downloadUrl = (currentSong.id.startsWith('local_') || currentSong.url?.startsWith('blob:'))
-      ? currentSong.url
-      : import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api/proxy-download?id=${videoId}` : `/api/proxy-download?id=${videoId}`;
+    const cleanVideoId = currentSong.id.replace('ytm_', '').split('_')[0];
+    
+    let downloadUrl = currentSong.url;
+    if (!currentSong.id.startsWith('local_') && !currentSong.url?.startsWith('blob:')) {
+      const token = await generatePoToken(cleanVideoId);
+      const tokenQuery = token ? `&potoken=${token}` : '';
+      downloadUrl = import.meta.env.VITE_API_URL 
+        ? `${import.meta.env.VITE_API_URL}/api/proxy-download?id=${cleanVideoId}${tokenQuery}` 
+        : `/api/proxy-download?id=${cleanVideoId}${tokenQuery}`;
+    }
 
     if (!downloadUrl) return;
     setDownloading(true);
@@ -108,9 +311,26 @@ export function FullPlayer() {
                   {currentSong.id.startsWith('local_') ? '📂 File Lokal' : '⚡ t-fest.pl MP3'}
                 </span>
               </div>
-              <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                <ListMusic size={20} />
-              </button>
+              <div className="flex gap-2 bg-white/5 rounded-full p-1 backdrop-blur-sm border border-white/10">
+                <button 
+                  onClick={() => handleViewModeChange('cover')} 
+                  className={`p-2 rounded-full transition-all duration-300 flex items-center justify-center ${viewMode === 'cover' ? 'bg-primary/90 text-white shadow-lg' : 'text-white/60 hover:text-white hover:bg-white/10'}`}
+                >
+                  <ImageIcon size={18} />
+                </button>
+                <button 
+                  onClick={() => handleViewModeChange('lyrics')} 
+                  className={`p-2 rounded-full transition-all duration-300 flex items-center justify-center ${viewMode === 'lyrics' ? 'bg-primary/90 text-white shadow-lg' : 'text-white/60 hover:text-white hover:bg-white/10'}`}
+                >
+                  <Mic2 size={18} />
+                </button>
+                <button 
+                  onClick={() => handleViewModeChange('video')} 
+                  className={`p-2 rounded-full transition-all duration-300 flex items-center justify-center ${viewMode === 'video' ? 'bg-primary/90 text-white shadow-lg' : 'text-white/60 hover:text-white hover:bg-white/10'}`}
+                >
+                  <Tv2 size={18} />
+                </button>
+              </div>
             </div>
 
             {/* Audio Loading Status Overlay */}
@@ -140,29 +360,94 @@ export function FullPlayer() {
               </div>
             )}
 
-            {/* Album Cover */}
+            {/* Middle Area: Cover / Lyrics / Video */}
             <motion.div 
               key={currentSong.id} /* force re-animate on change */
-              className="relative z-10 flex-1 flex items-center justify-center py-4"
+              className="relative z-10 flex-1 flex items-center justify-center py-4 overflow-hidden"
               initial={{ scale: 0.9, opacity: 0, rotate: -5 }}
               animate={{ scale: 1, opacity: 1, rotate: 0 }}
               transition={{ type: "spring", damping: 20 }}
             >
-              <div className={`w-full max-w-[240px] aspect-square rounded-[36px] overflow-hidden shadow-2xl shadow-primary/30 relative transition-all duration-500 ${isPlaying ? 'scale-100' : 'scale-95'} ${isLoadingAudio ? 'animate-pulse scale-98 border-2 border-primary/50' : ''}`}>
-                <img src={currentSong.cover} alt={currentSong.title} className={`w-full h-full object-cover transition-all duration-300 ${isLoadingAudio ? 'brightness-50 blur-[2px]' : ''}`} />
-                {isLoadingAudio && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[1px] p-4 text-center">
-                    <div className="relative flex items-center justify-center">
-                      {/* Concentric spinning rings */}
-                      <div className="absolute w-12 h-12 border-4 border-primary/20 rounded-full"></div>
-                      <div className="absolute w-12 h-12 border-4 border-t-primary rounded-full animate-spin"></div>
-                    </div>
-                    <span className="text-[10px] font-bold text-primary tracking-widest uppercase mt-4 animate-pulse">
-                      CONVERTING BY T-FEST.PL...
-                    </span>
-                  </div>
+              <AnimatePresence mode="wait">
+                {viewMode === 'lyrics' ? (
+                  <motion.div
+                    key="lyrics"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    ref={lyricsContainerRef}
+                    className="w-full h-full max-h-[360px] overflow-y-auto rounded-[24px] bg-black/40 backdrop-blur-md p-6 border border-white/10 no-scrollbar text-center flex flex-col gap-4 py-32"
+                  >
+                    {loadingLyrics ? (
+                      <div className="flex flex-col items-center justify-center h-full gap-3 opacity-70">
+                        <Loader2 size={32} className="animate-spin text-primary" />
+                        <p className="text-sm">Mencari sinkronisasi lirik...</p>
+                      </div>
+                    ) : syncedLyrics.length > 0 ? (
+                      syncedLyrics.map((line, idx) => {
+                         // A line is active if it's the closest one past the current time
+                         const nextLineTime = syncedLyrics[idx + 1]?.time || Infinity;
+                         const isActive = currentTimeSec >= line.time && currentTimeSec < nextLineTime;
+                         return (
+                           <p 
+                             key={idx}
+                             className={`whitespace-pre-line text-lg font-medium leading-relaxed tracking-wide transition-all duration-300 ${isActive ? 'text-primary scale-110 drop-shadow-[0_0_10px_rgba(var(--color-primary),0.8)] lyric-active' : 'text-white/40 scale-100 hover:text-white/70'}`}
+                             onClick={() => requestSeek(line.time / (totalDurationSec || 1))}
+                           >
+                             {line.text}
+                           </p>
+                         );
+                      })
+                    ) : (
+                      <p className="whitespace-pre-line text-lg font-medium leading-relaxed tracking-wide text-white/90 pb-8 mt-auto mb-auto">
+                        {lyrics}
+                      </p>
+                    )}
+                  </motion.div>
+                ) : viewMode === 'video' ? (
+                  <motion.div
+                    key="video"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="w-full aspect-video rounded-[24px] overflow-hidden shadow-2xl bg-black relative"
+                  >
+                     <div className="absolute inset-0 bg-black flex items-center justify-center">
+                       <iframe
+                         width="100%"
+                         height="100%"
+                         src={`https://www.youtube.com/embed/${(currentSong.id.includes('v=') ? currentSong.id.split('v=')[1].split('&')[0] : currentSong.id.includes('youtu.be/') ? currentSong.id.split('youtu.be/')[1].split('?')[0] : currentSong.id.replace('ytm_', '').split('_')[0])}?autoplay=1&mute=0&controls=1&modestbranding=1&showinfo=0&rel=0&playsinline=1`}
+                         title="YouTube video player"
+                         frameBorder="0"
+                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                         allowFullScreen
+                         className="w-full h-full"
+                       ></iframe>
+                     </div>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="album"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className={`w-full max-w-[240px] aspect-square rounded-[36px] overflow-hidden shadow-2xl shadow-primary/30 relative transition-all duration-500 ${isPlaying ? 'scale-100' : 'scale-95'} ${isLoadingAudio ? 'animate-pulse scale-98 border-2 border-primary/50' : ''}`}
+                  >
+                    <img src={currentSong.cover} alt={currentSong.title} className={`w-full h-full object-cover transition-all duration-300 ${isLoadingAudio ? 'brightness-50 blur-[2px]' : ''}`} />
+                    {isLoadingAudio && (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[1px] p-4 text-center">
+                        <div className="relative flex items-center justify-center">
+                          <div className="absolute w-12 h-12 border-4 border-primary/20 rounded-full"></div>
+                          <div className="absolute w-12 h-12 border-4 border-t-primary rounded-full animate-spin"></div>
+                        </div>
+                        <span className="text-[10px] font-bold text-primary tracking-widest uppercase mt-4 animate-pulse">
+                          CONVERTING BY T-FEST.PL...
+                        </span>
+                      </div>
+                    )}
+                  </motion.div>
                 )}
-              </div>
+              </AnimatePresence>
             </motion.div> 
  
             {/* Song Info & Controls */}
