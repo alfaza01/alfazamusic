@@ -5,6 +5,11 @@ import { getSavedSongs } from '../../lib/db';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
+// Peringatan saat APK tidak punya VITE_API_URL
+if (!import.meta.env.VITE_API_URL) {
+  console.warn('[GlobalAudioPlayer] VITE_API_URL tidak di-set! Audio akan coba Invidious langsung.');
+}
+
 // ─── Helper: dapatkan Video ID bersih dari berbagai format ─────────────────
 function extractVideoId(songId: string): string {
   if (songId.startsWith('ytm_')) return songId.replace('ytm_', '').split('_')[0];
@@ -91,11 +96,18 @@ export function GlobalAudioPlayer() {
           return;
         }
 
-        // Case 4: YouTube Music (ytm_) atau YouTube biasa — gunakan proxy-download
+        // Case 4: YouTube / YouTube Music — gunakan proxy-download via Vercel
         const videoId = extractVideoId(currentSong.id);
         if (videoId && videoId.length >= 8) {
-          const proxyUrl = `${API_BASE}/api/proxy-download?id=${videoId}`;
-          setAudioSrc(proxyUrl);
+          if (API_BASE) {
+            // Ada VITE_API_URL → pakai proxy server Vercel (cara terbaik)
+            const proxyUrl = `${API_BASE}/api/proxy-download?id=${videoId}`;
+            setAudioSrc(proxyUrl);
+          } else {
+            // Tidak ada VITE_API_URL (APK tanpa config) → langsung Invidious CDN
+            const directUrl = `https://invidious.jing.rocks/latest_version?id=${videoId}&itag=140&local=true`;
+            setAudioSrc(directUrl);
+          }
           return;
         }
 
